@@ -29,7 +29,7 @@ jobs:
 
     steps:
       - name: 🧹 Process stale issues and PRs
-        uses: actions/stale@v9
+        uses: actions/stale@v10
         with:
           stale-issue-message: >
             This issue has been inactive for 30 days. It will be closed in 7 days

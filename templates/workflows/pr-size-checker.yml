@@ -41,7 +41,7 @@ jobs:
 
       - name: 📥 Checkout repository
         if: steps.author_check.outputs.allowed == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: 📦 Install GitHub Copilot CLI
         if: steps.author_check.outputs.allowed == 'true'
