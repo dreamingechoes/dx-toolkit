@@ -1,0 +1,132 @@
+# ──────────────────────────────────────────────────────────────
+# 🧹 Stale Issue Manager — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# AI-powered stale issue management that analyzes old issues,
+# determines if they are still relevant, adds a gentle nudge
+# comment, and optionally closes truly stale issues.
+# ──────────────────────────────────────────────────────────────
+
+name: 🧹 Stale Issue Manager
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Every Monday at 9:00 UTC
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: stale-issue-manager
+  cancel-in-progress: true
+
+jobs:
+  manage-stale:
+    name: 🧹 Manage Stale Issues
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 📦 Install GitHub Copilot CLI
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 🧹 Analyze and manage stale issues
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          DAYS_STALE: ${{ inputs.days_stale || '30' }}
+          AUTO_CLOSE: ${{ inputs.auto_close || 'false' }}
+          MODEL: ${{ inputs.model || 'claude-sonnet-4' }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          copilot -p "
+          You are a Stale Issue Manager for the repository '${{ github.repository }}'.
+          Your job is to intelligently manage stale issues — not just by age, but by
+          analyzing whether they are still relevant to the project.
+
+          CONFIGURATION:
+          - Days without activity to consider stale: $DAYS_STALE
+          - Auto-close very stale issues: $AUTO_CLOSE
+
+          Follow these steps IN ORDER:
+
+          ──────────────────────────────────────────────
+          STEP 1 — UNDERSTAND THE PROJECT
+          ──────────────────────────────────────────────
+          - Read the repository README to understand the project.
+          - Scan the codebase to understand current state and recent changes.
+
+          ──────────────────────────────────────────────
+          STEP 2 — FIND STALE ISSUES
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to list all open issues in this repository.
+          Filter for issues that have had no activity (comments, label changes,
+          references) for more than $DAYS_STALE days.
+
+          ──────────────────────────────────────────────
+          STEP 3 — ANALYZE EACH STALE ISSUE
+          ──────────────────────────────────────────────
+          For each stale issue, determine:
+          a) Is the issue still relevant to the current codebase?
+             - Check if the file/feature mentioned still exists.
+             - Check if the bug described is still reproducible based on current code.
+             - Check if a similar issue or PR has resolved it.
+          b) Has it been superseded by another issue or PR?
+          c) Is it a feature request that is still valuable?
+          d) Is it blocked on something external?
+
+          Categorize each issue:
+          - 🟢 STILL RELEVANT — keep open, add encouragement comment
+          - 🟡 NEEDS CLARIFICATION — ask the author for updates
+          - 🔴 NO LONGER RELEVANT — candidate for closing
+
+          ──────────────────────────────────────────────
+          STEP 4 — ADD COMMENTS
+          ──────────────────────────────────────────────
+          For each stale issue, use the GitHub MCP Server to add an appropriate comment:
+
+          For 🟢 STILL RELEVANT:
+          > 🧹 **Stale check:** This issue has been inactive for $DAYS_STALE+ days,
+          > but it appears still relevant to the project. Keeping it open.
+          > If you are working on this, please share an update!
+
+          For 🟡 NEEDS CLARIFICATION:
+          > 🧹 **Stale check:** This issue has been inactive for $DAYS_STALE+ days.
+          > Is this still an issue? If so, please provide an update or additional context.
+          > If not resolved within 14 days, it may be closed.
+
+          For 🔴 NO LONGER RELEVANT (if AUTO_CLOSE is true):
+          > 🧹 **Closing as stale:** This issue has been inactive for an extended period
+          > and appears to no longer be relevant to the current codebase.
+          > Feel free to reopen if this is still needed!
+
+          ──────────────────────────────────────────────
+          STEP 5 — CLOSE IF CONFIGURED
+          ──────────────────────────────────────────────
+          If AUTO_CLOSE is 'true', close issues categorized as 🔴 NO LONGER RELEVANT
+          that have been stale for more than $(($DAYS_STALE * 2)) days.
+          Add the label '🧹 stale' before closing (create it if it does not exist).
+
+          ──────────────────────────────────────────────
+          STEP 6 — SUMMARY
+          ──────────────────────────────────────────────
+          Print a summary of actions taken:
+          - Total stale issues found
+          - Issues marked as still relevant
+          - Issues needing clarification
+          - Issues closed (if any)
+
+          IMPORTANT:
+          - NEVER close issues that are clearly still relevant.
+          - Be gentle and respectful in comments.
+          - Assign the '🧹 stale' label to all issues you comment on.
+          - Do NOT spam — if an issue already has a recent stale comment, skip it.
+          " --allow-all-tools --model "$MODEL"
+
+          echo "✅ Stale issue management completed"

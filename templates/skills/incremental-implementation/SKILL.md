@@ -1,0 +1,218 @@
+---
+name: incremental-implementation
+description: 'Build in thin vertical slices — implement, test, verify, commit. Use when implementing any feature or change that touches more than one file, or when a task feels too big to land in one step.'
+---
+
+# Incremental Implementation
+
+## Overview
+
+Build in thin vertical slices — implement one piece, test it, verify it, then expand. Each increment leaves the system in a working, testable state. This is the execution discipline that makes large features manageable and bugs easy to locate.
+
+## When to Use
+
+- Implementing any multi-file change
+- Building a new feature from a task breakdown
+- Refactoring existing code
+- Any time you're tempted to write more than ~100 lines before testing
+
+**When NOT to use:** Single-file, single-function changes where the scope is already minimal.
+
+## The Increment Cycle
+
+```
+┌──────────────────────────────────────┐
+│                                      │
+│   Implement ──→ Test ──→ Verify ──┐  │
+│       ▲                           │  │
+│       └───── Commit ◄─────────────┘  │
+│              │                       │
+│              ▼                       │
+│          Next slice                  │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+For each slice:
+
+1. **Implement** the smallest complete piece of functionality
+2. **Test** — run the test suite (or write a test if none exists)
+3. **Verify** — confirm the slice works (tests pass, build succeeds)
+4. **Commit** — save progress with a descriptive message (see `git-workflow-and-versioning`)
+5. **Move to the next slice**
+
+## Slicing Strategies
+
+### Vertical Slices (Preferred)
+
+Build one complete path through the stack:
+
+```
+Slice 1: Create a task (DB + API + basic UI)
+    → Tests pass, user can create a task via the UI
+
+Slice 2: List tasks (query + API + UI)
+    → Tests pass, user can see their tasks
+
+Slice 3: Edit a task (update + API + UI)
+    → Tests pass, user can modify tasks
+
+Slice 4: Delete a task (delete + API + UI + confirmation)
+    → Tests pass, full CRUD complete
+```
+
+### Contract-First Slicing
+
+When backend and frontend need to develop in parallel:
+
+```
+Slice 0: Define the API contract (types, interfaces, OpenAPI spec)
+Slice 1a: Implement backend against the contract + API tests
+Slice 1b: Implement frontend against mock data matching the contract
+Slice 2: Integrate and test end-to-end
+```
+
+### Risk-First Slicing
+
+Tackle the most uncertain piece first:
+
+```
+Slice 1: Prove the WebSocket connection works (highest risk)
+Slice 2: Build real-time updates on the proven connection
+Slice 3: Add offline support and reconnection
+```
+
+If Slice 1 fails, you discover it before investing in Slices 2 and 3.
+
+## Implementation Rules
+
+### Rule 0: Simplicity First
+
+Before writing code, ask: "What is the simplest thing that could work?"
+
+After writing code, check:
+
+- Can this be done in fewer lines?
+- Are these abstractions earning their complexity?
+- Would a senior engineer say "why didn't you just..."?
+- Am I building for hypothetical future requirements?
+
+```
+SIMPLICITY CHECK:
+✗ Generic EventBus with middleware pipeline for one notification
+✓ Simple function call
+
+✗ Abstract factory pattern for two similar components
+✓ Two straightforward components with shared utilities
+
+✗ Config-driven form builder for three forms
+✓ Three form components
+```
+
+Three similar lines is better than a premature abstraction. Build the naive, obviously-correct version first.
+
+### Rule 1: Scope Discipline
+
+Touch only what the task requires.
+
+Do NOT:
+
+- "Clean up" adjacent code
+- Refactor imports in files you're not modifying
+- Remove comments you don't fully understand
+- Add features not in the spec
+- Modernize syntax in files you're only reading
+
+```
+NOTICED BUT NOT TOUCHING:
+- src/utils/format.ts has an unused import (unrelated to this task)
+- The auth middleware could use better error messages (separate task)
+→ Want me to create tasks for these?
+```
+
+### Rule 2: One Thing at a Time
+
+Each increment changes one logical thing.
+
+**Bad:** One commit that adds a component, refactors another, and updates build config.
+**Good:** Three separate commits — one per change.
+
+### Rule 3: Keep It Compilable
+
+After each increment, the project builds and existing tests pass. Never leave the codebase broken between slices.
+
+### Rule 4: Feature Flags for Incomplete Work
+
+If a feature isn't ready but you need to merge increments:
+
+```typescript
+const ENABLE_TASK_SHARING = process.env.FEATURE_TASK_SHARING === 'true'
+
+if (ENABLE_TASK_SHARING) {
+  // New sharing UI — hidden until flag is enabled
+}
+```
+
+### Rule 5: Safe Defaults
+
+New code defaults to conservative behavior:
+
+```typescript
+export function createTask(data: TaskInput, options?: { notify?: boolean }) {
+  const shouldNotify = options?.notify ?? false // safe: off by default
+  // ...
+}
+```
+
+### Rule 6: Rollback-Friendly
+
+Each increment should be independently revertable:
+
+- Additive changes (new files, new functions) are easy to revert
+- Modifications to existing code should be minimal and focused
+- Database migrations should have corresponding rollbacks
+- Don't delete and replace in the same commit — separate them
+
+## Increment Checklist
+
+After each increment:
+
+- [ ] The change does one thing and does it completely
+- [ ] All existing tests pass
+- [ ] The build succeeds
+- [ ] Type checking passes
+- [ ] Linting passes
+- [ ] The new functionality works as expected
+- [ ] The change is committed with a descriptive message
+
+## Common Rationalizations
+
+| Rationalization                                    | Reality                                                                                 |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| "I'll test it all at the end"                      | Bugs compound. A bug in Slice 1 makes Slices 2-5 wrong. Test each slice.                |
+| "It's faster to do it all at once"                 | It feels faster until something breaks and you can't find which of 500 lines caused it. |
+| "These changes are too small to commit separately" | Small commits are free. Large commits hide bugs and make rollbacks painful.             |
+| "I'll add the feature flag later"                  | If the feature isn't complete, it shouldn't be user-visible. Add the flag now.          |
+| "This refactor is small enough to include"         | Refactors mixed with features make both harder to review and debug. Separate them.      |
+
+## Red Flags
+
+- More than 100 lines written without running tests
+- Multiple unrelated changes in a single increment
+- "Let me just quickly add this too" scope expansion
+- Skipping the test/verify step to move faster
+- Build or tests broken between increments
+- Large uncommitted changes accumulating
+- Building abstractions before the third use case demands it
+- Touching files outside the task scope "while I'm here"
+
+## Verification
+
+After completing all increments for a task:
+
+- [ ] Each increment was individually tested and committed
+- [ ] The full test suite passes
+- [ ] The build is clean (no warnings, no type errors)
+- [ ] The feature works end-to-end as specified
+- [ ] No uncommitted changes remain
+- [ ] Feature flags are in place for incomplete work

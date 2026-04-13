@@ -1,0 +1,164 @@
+# ──────────────────────────────────────────────────────────────
+# 📝 Conventional Commit Checker — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Validates PR title and commit messages follow Conventional
+# Commits spec. Checks format type(optional-scope): description.
+# Comments on PR with violations and correct format examples.
+# Fails if violations are found.
+# ──────────────────────────────────────────────────────────────
+
+name: 📝 Conventional Commit Checker
+
+on:
+  pull_request:
+    types: [opened, synchronize, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: commit-checker-${{ github.event.pull_request.number || 'manual' }}
+  cancel-in-progress: true
+
+jobs:
+  check-commits:
+    name: 📝 Check Commits
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 📦 Install GitHub Copilot CLI
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 📝 Check conventional commits with AI
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          CHECK_PR_TITLE: "true"
+          CHECK_COMMITS: "true"
+          ALLOWED_TYPES: "feat,fix,docs,style,refactor,perf,test,build,ci,chore,revert"
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          MODEL: "claude-sonnet-4"
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          copilot -p "
+          You are a Conventional Commit Checker for the repository '${{ github.repository }}'.
+          Your job is to validate that PR titles and commit messages follow the
+          Conventional Commits specification (https://www.conventionalcommits.org).
+
+          CONFIGURATION:
+          - Check PR Title: $CHECK_PR_TITLE
+          - Check Commits: $CHECK_COMMITS
+          - Allowed Types: $ALLOWED_TYPES
+          - PR Number: $PR_NUMBER
+          - PR Title: $PR_TITLE
+
+          Follow these steps IN ORDER:
+
+          ──────────────────────────────────────────────
+          STEP 1 — DEFINE VALIDATION RULES
+          ──────────────────────────────────────────────
+          The Conventional Commits format is:
+            type(scope): description
+
+            [optional body]
+
+            [optional footer(s)]
+
+          Rules:
+          - 'type' MUST be one of: $ALLOWED_TYPES
+          - 'scope' is OPTIONAL, enclosed in parentheses
+          - ':' MUST follow the type (or scope)
+          - A space MUST follow the ':'
+          - 'description' MUST NOT be empty
+          - 'description' MUST start with lowercase
+          - 'description' MUST NOT end with a period
+          - Total subject line SHOULD be <= 72 characters
+          - BREAKING CHANGE can be indicated by '!' before ':'
+            or by 'BREAKING CHANGE:' in the footer
+
+          ──────────────────────────────────────────────
+          STEP 2 — VALIDATE PR TITLE
+          ──────────────────────────────────────────────
+          If CHECK_PR_TITLE is 'true':
+          - Parse the PR title: $PR_TITLE
+          - Validate against the Conventional Commits format.
+          - Record: PASS or FAIL with specific violation details.
+
+          ──────────────────────────────────────────────
+          STEP 3 — VALIDATE COMMIT MESSAGES
+          ──────────────────────────────────────────────
+          If CHECK_COMMITS is 'true':
+          - Use the GitHub MCP Server or git log to get all commits
+            in PR #$PR_NUMBER.
+          - For each commit, validate the message against the format.
+          - Skip merge commits (starting with 'Merge').
+          - Record each: PASS or FAIL with specific violation details.
+
+          ──────────────────────────────────────────────
+          STEP 4 — COMPILE REPORT
+          ──────────────────────────────────────────────
+          Create a report:
+
+          ## 📝 Conventional Commits Check
+
+          ### PR Title
+          \`$PR_TITLE\`
+          **Status:** ✅ Valid / ❌ Invalid
+          (If invalid, explain what's wrong and show the correct format)
+
+          ### Commit Messages
+          | SHA | Message | Status | Issue |
+          |-----|---------|--------|-------|
+          | abc1234 | feat: add login | ✅ | — |
+          | def5678 | updated readme | ❌ | Missing type prefix |
+
+          ### Summary
+          - PR Title: ✅/❌
+          - Commits: X/Y valid
+          - Overall: ✅ PASSED / ❌ FAILED
+
+          ### Correct Format Examples
+          \`\`\`
+          feat: add user authentication
+          fix(auth): resolve token expiration bug
+          docs: update API documentation
+          feat!: redesign user profile (BREAKING CHANGE)
+          refactor(core): simplify error handling
+          \`\`\`
+
+          ──────────────────────────────────────────────
+          STEP 5 — COMMENT ON PR
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to comment on PR #$PR_NUMBER
+          with the report.
+          - If all checks pass, post a brief approval message.
+          - If checks fail, post the full report with examples.
+
+          ──────────────────────────────────────────────
+          STEP 6 — SET EXIT CODE
+          ──────────────────────────────────────────────
+          If any checked items have violations, exit with code 1
+          to fail the workflow.
+
+          IMPORTANT:
+          - Be helpful, not pedantic — show the correct format for
+            each violation.
+          - Merge commits should be ignored.
+          - If using squash merge, the PR title matters most since
+            it becomes the final commit message.
+          - Recognize common mistakes: missing colon, uppercase
+            description, missing type, period at end.
+          " --allow-all-tools --model "$MODEL"
+
+          echo "✅ Conventional commits check complete"

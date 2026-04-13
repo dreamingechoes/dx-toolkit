@@ -1,0 +1,220 @@
+# ──────────────────────────────────────────────────────────────
+# ✅ CI — Continuous Integration
+# ──────────────────────────────────────────────────────────────
+# Validates formatting, syntax, and conventions on every push
+# to main and on every pull request. This is the primary
+# quality gate for the repository.
+# ──────────────────────────────────────────────────────────────
+
+name: ✅ CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    name: 🎨 Format Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: 📥 Install dependencies
+        run: npm ci
+
+      - name: 🎨 Check formatting with Prettier
+        run: npm run format:check
+
+  validate-yaml:
+    name: 📋 Validate YAML
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 📦 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 📥 Install PyYAML
+        run: pip install pyyaml
+
+      - name: 📋 Validate all YAML files
+        run: |
+          errors=0
+          while IFS= read -r file; do
+            if ! python3 -c "import yaml; yaml.safe_load(open('$file'))" 2>/dev/null; then
+              echo "❌ Invalid YAML: $file"
+              errors=$((errors + 1))
+            fi
+          done < <(find . -type f \( -name '*.yml' -o -name '*.yaml' \) -not -path './node_modules/*')
+
+          if [ "$errors" -gt 0 ]; then
+            echo "::error::Found $errors invalid YAML file(s)"
+            exit 1
+          fi
+          echo "✅ All YAML files are valid"
+
+  validate-json:
+    name: 📦 Validate JSON
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 📦 Validate all JSON files
+        run: |
+          errors=0
+          while IFS= read -r file; do
+            if ! python3 -c "import json; json.load(open('$file'))" 2>/dev/null; then
+              echo "❌ Invalid JSON: $file"
+              errors=$((errors + 1))
+            fi
+          done < <(find . -type f -name '*.json' -not -path './node_modules/*')
+
+          if [ "$errors" -gt 0 ]; then
+            echo "::error::Found $errors invalid JSON file(s)"
+            exit 1
+          fi
+          echo "✅ All JSON files are valid"
+
+  validate-scripts:
+    name: 🐚 Validate Shell Scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 🐚 Check bash syntax
+        run: |
+          errors=0
+          while IFS= read -r file; do
+            if ! bash -n "$file" 2>/dev/null; then
+              echo "❌ Syntax error: $file"
+              errors=$((errors + 1))
+            fi
+          done < <(find . -type f -name '*.sh' -not -path './node_modules/*')
+
+          if [ "$errors" -gt 0 ]; then
+            echo "::error::Found $errors shell script(s) with syntax errors"
+            exit 1
+          fi
+          echo "✅ All shell scripts pass syntax check"
+
+      - name: 🔍 Lint with ShellCheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: .
+          severity: warning
+        env:
+          SHELLCHECK_OPTS: --exclude=SC2086,SC2016,SC2254
+
+  validate-frontmatter:
+    name: 📝 Validate Frontmatter
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 📝 Validate conventions
+        run: bash scripts/validate-frontmatter.sh
+
+  validate-structure:
+    name: 🏗️ Validate File Structure
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 🏗️ Check required files exist
+        run: |
+          errors=0
+          required_files=(
+            "README.md"
+            "LICENSE"
+            "CONTRIBUTING.md"
+            "SECURITY.md"
+            "CLAUDE.md"
+            "AGENTS.md"
+            ".github/copilot-instructions.md"
+            ".github/PULL_REQUEST_TEMPLATE.md"
+            ".github/CODEOWNERS"
+            ".github/ISSUE_TEMPLATE/bug_report.yml"
+            ".github/ISSUE_TEMPLATE/feature_request.yml"
+          )
+
+          for file in "${required_files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "❌ Missing required file: $file"
+              errors=$((errors + 1))
+            fi
+          done
+
+          if [ "$errors" -gt 0 ]; then
+            echo "::error::Missing $errors required file(s)"
+            exit 1
+          fi
+          echo "✅ All required files present"
+
+      - name: 🏗️ Check skill folder structure
+        run: |
+          errors=0
+          for dir in templates/skills/*/; do
+            if [ ! -f "$dir/SKILL.md" ] && [ ! -f "${dir}SKILL.md" ]; then
+              echo "❌ Missing SKILL.md in: $dir"
+              errors=$((errors + 1))
+            fi
+          done
+
+          if [ "$errors" -gt 0 ]; then
+            echo "::error::Found $errors skill folder(s) without SKILL.md"
+            exit 1
+          fi
+          echo "✅ All skill folders have SKILL.md"
+
+      - name: 🏗️ Check agent file naming
+        run: |
+          errors=0
+          for file in templates/agents/*.md; do
+            [ -f "$file" ] || continue
+            basename=$(basename "$file")
+            if [[ ! "$basename" =~ \.agent\.md$ ]]; then
+              echo "❌ Agent file missing .agent.md extension: $file"
+              errors=$((errors + 1))
+            fi
+          done
+
+          if [ "$errors" -gt 0 ]; then
+            echo "::error::Found $errors agent file(s) with incorrect naming"
+            exit 1
+          fi
+          echo "✅ All agent files follow naming convention"

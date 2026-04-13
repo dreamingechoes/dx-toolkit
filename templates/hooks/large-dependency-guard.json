@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": ".github/hooks/scripts/large-dependency-guard.sh",
+        "timeout": 5,
+        "description": "Require confirmation before adding new dependencies to package manifests"
+      }
+    ]
+  }
+}

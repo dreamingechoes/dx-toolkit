@@ -1,0 +1,144 @@
+# ──────────────────────────────────────────────────────────────
+# 🔗 Broken Link Checker — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Scans markdown files for broken internal and external links.
+# Checks relative links exist in repo, verifies external URLs
+# return 200. Creates an issue listing broken links with file
+# and line number.
+# ──────────────────────────────────────────────────────────────
+
+name: 🔗 Broken Link Checker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/*.md"
+      - "docs/**"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: broken-link-checker-${{ github.sha || 'manual' }}
+  cancel-in-progress: true
+
+jobs:
+  check-links:
+    name: 🔗 Check Links
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 📦 Install GitHub Copilot CLI
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 🔗 Check links with AI
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          SCAN_PATHS: ${{ inputs.scan_paths || '**/*.md' }}
+          CREATE_ISSUE: ${{ inputs.create_issue || 'true' }}
+          MODEL: ${{ inputs.model || 'claude-sonnet-4' }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          copilot -p "
+          You are a Broken Link Checker for the repository '${{ github.repository }}'.
+          Your job is to find all broken links in markdown files and report them.
+
+          CONFIGURATION:
+          - Scan Paths: $SCAN_PATHS
+          - Create Issue: $CREATE_ISSUE
+
+          Follow these steps IN ORDER:
+
+          ──────────────────────────────────────────────
+          STEP 1 — FIND MARKDOWN FILES
+          ──────────────────────────────────────────────
+          Find all files matching the glob pattern '$SCAN_PATHS'.
+          List every markdown file that will be scanned.
+
+          ──────────────────────────────────────────────
+          STEP 2 — EXTRACT LINKS
+          ──────────────────────────────────────────────
+          For each markdown file, extract all links:
+          - Inline links: [text](url)
+          - Reference links: [text][ref] with [ref]: url
+          - Bare URLs: https://...
+          - Image links: ![alt](url)
+          - Anchor links: [text](#heading)
+
+          Record the file path, line number, link text, and URL for each.
+
+          ──────────────────────────────────────────────
+          STEP 3 — CHECK INTERNAL LINKS
+          ──────────────────────────────────────────────
+          For relative links (not starting with http/https):
+          - Resolve the path relative to the file containing the link.
+          - Check if the target file exists in the repository.
+          - For anchor links (#heading), check if the heading exists
+            in the target file.
+          - Mark as BROKEN if the target does not exist.
+
+          ──────────────────────────────────────────────
+          STEP 4 — CHECK EXTERNAL LINKS
+          ──────────────────────────────────────────────
+          For external links (starting with http/https):
+          - Use curl or wget to check each URL with a HEAD request.
+          - Accept redirects (follow up to 5 redirects).
+          - Mark as BROKEN if: connection refused, timeout (>10s),
+            or HTTP status >= 400.
+          - Mark as WARNING for: redirects to a different domain,
+            HTTP 301 (permanent redirect).
+          - Skip mailto: and tel: links.
+
+          ──────────────────────────────────────────────
+          STEP 5 — COMPILE REPORT
+          ──────────────────────────────────────────────
+          Create a report:
+
+          ## 🔗 Broken Link Report
+
+          ### ❌ Broken Links
+          | File | Line | Link Text | URL | Status |
+          |------|------|-----------|-----|--------|
+          | path/to/file.md | 42 | Link text | url | 404 |
+
+          ### ⚠️ Warnings
+          | File | Line | Link Text | URL | Issue |
+          |------|------|-----------|-----|-------|
+          | path/to/file.md | 15 | Link text | url | Permanent redirect |
+
+          ### ✅ Summary
+          - **X** files scanned
+          - **Y** links checked
+          - **Z** broken links found
+          - **W** warnings
+
+          ──────────────────────────────────────────────
+          STEP 6 — CREATE ISSUE (if enabled)
+          ──────────────────────────────────────────────
+          If CREATE_ISSUE is 'true' and broken links were found:
+          - Use the GitHub MCP Server to create an issue.
+          - Title: 🔗 Broken Links Found — <date>
+          - Body: the compiled report from Step 5.
+          - Labels: documentation, bug
+          - If a similar open issue already exists, update it instead.
+
+          IMPORTANT:
+          - Do NOT flag intentionally broken example URLs
+            (e.g., https://example.com).
+          - Rate-limit external checks to avoid being blocked.
+          - Group multiple broken links from the same file together.
+          - Suggest fixes when the correct URL is obvious
+            (e.g., typo in anchor, renamed file).
+          " --allow-all-tools --model "$MODEL"
+
+          echo "✅ Link check complete"

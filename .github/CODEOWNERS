@@ -1,0 +1,20 @@
+# Code Owners — https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything
+
+- @dreamingechoes
+
+# Workflows require explicit review
+
+.github/workflows/ @dreamingechoes
+caller-workflows/ @dreamingechoes
+
+# Agents and skills
+
+.github/agents/ @dreamingechoes
+.github/skills/ @dreamingechoes
+
+# Security-sensitive files
+
+.github/hooks/ @dreamingechoes
+.devcontainer/ @dreamingechoes

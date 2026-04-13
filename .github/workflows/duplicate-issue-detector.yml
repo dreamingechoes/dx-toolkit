@@ -1,0 +1,132 @@
+# ──────────────────────────────────────────────────────────────
+# 🔄 Duplicate Issue Detector — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Detects potential duplicate issues using AI to compare the
+# new issue against existing open issues. Labels and links
+# duplicates to help maintainers triage faster.
+# ──────────────────────────────────────────────────────────────
+
+name: 🔄 Duplicate Issue Detector
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: duplicate-check-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  detect-duplicates:
+    name: 🔄 Detect Duplicate Issues
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 📦 Install GitHub Copilot CLI
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 🔄 Check for duplicate issues
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          MODEL: "claude-sonnet-4"
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          copilot -p "
+          You are a Duplicate Issue Detector for the repository '${{ github.repository }}'.
+          Your job is to determine if a newly created issue is a duplicate of an existing one.
+
+          NEW ISSUE: #$ISSUE_NUMBER
+
+          Follow these steps carefully:
+
+          ──────────────────────────────────────────────
+          STEP 1 — READ THE NEW ISSUE
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to read the full details of issue #$ISSUE_NUMBER:
+          - Title
+          - Body
+          - Labels (if any)
+
+          ──────────────────────────────────────────────
+          STEP 2 — FETCH EXISTING OPEN ISSUES
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to list all open issues in the repository.
+          Exclude issue #$ISSUE_NUMBER itself from the comparison.
+
+          ──────────────────────────────────────────────
+          STEP 3 — COMPARE AND DETECT DUPLICATES
+          ──────────────────────────────────────────────
+          For each existing open issue, analyze:
+          1. **Title similarity**: Do the titles describe the same problem?
+          2. **Content overlap**: Do the descriptions report the same bug, request the same feature, or discuss the same topic?
+          3. **Context match**: Are they about the same component, file, or area of the codebase?
+
+          Classify each potential match with a confidence level:
+          - 🔴 **High** (>80%): Almost certainly a duplicate
+          - 🟡 **Medium** (50–80%): Likely related, possibly a duplicate
+          - 🟢 **Low** (<50%): Similar topic but different issue
+
+          Only report matches with Medium or High confidence.
+
+          ──────────────────────────────────────────────
+          STEP 4 — TAKE ACTION BASED ON FINDINGS
+          ──────────────────────────────────────────────
+
+          **If HIGH confidence duplicates found:**
+          Use the GitHub MCP Server to add a comment on issue #$ISSUE_NUMBER:
+
+          > 🔄 **Potential Duplicate Detected**
+          >
+          > This issue appears to be a duplicate of:
+          > - #[number] — [title] (🔴 High confidence)
+          >
+          > **Recommendation:** Please check the linked issue(s). If this is indeed
+          > a duplicate, consider closing this issue and following the existing one.
+          >
+          > ---
+          > 🤖 *Duplicate detection by Copilot*
+
+          Also add the label 'possible-duplicate' to issue #$ISSUE_NUMBER.
+          If that label does not exist, create it first with color '#CFD3D7'
+          and description 'Possible duplicate of another issue'.
+
+          **If only MEDIUM confidence matches found:**
+          Use the GitHub MCP Server to add a comment:
+
+          > 🔄 **Related Issues Found**
+          >
+          > This issue may be related to:
+          > - #[number] — [title] (🟡 Medium confidence)
+          >
+          > These might not be exact duplicates, but cover similar topics.
+          > @$ISSUE_AUTHOR, please check if your issue is addressed in the
+          > linked issues above.
+          >
+          > ---
+          > 🤖 *Duplicate detection by Copilot*
+
+          **If no duplicates found:**
+          Do nothing — no comment needed. Just stop.
+
+          IMPORTANT:
+          - Be conservative: only flag TRUE duplicates, not vaguely related issues.
+          - Compare meaning and intent, not just keywords.
+          - Never auto-close issues — only inform and label.
+          - Respect the issue author — be helpful, not dismissive.
+          " --allow-all-tools --model "$MODEL"
+
+          echo "✅ Duplicate check completed for issue #$ISSUE_NUMBER"

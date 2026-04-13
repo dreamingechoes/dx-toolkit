@@ -1,0 +1,121 @@
+# ──────────────────────────────────────────────────────────────
+# 🏷️✨ Label Beautifier — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Modernizes all your labels with emojis, descriptions, and
+# consistent colors. Supports dry run mode.
+# ──────────────────────────────────────────────────────────────
+
+name: 🏷️✨ Label Beautifier
+
+on:
+  schedule:
+    - cron: "0 9 1 */3 *" # Quarterly: first day every 3 months at 9:00 UTC
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: label-beautifier
+  cancel-in-progress: false
+
+jobs:
+  beautify-labels:
+    name: 🏷️✨ Beautify Repository Labels
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 📦 Install GitHub Copilot CLI
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 🏷️✨ Analyze and beautify labels
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          MODEL: ${{ inputs.model || 'claude-sonnet-4' }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          copilot -p "
+          You are a Label Beautifier for the repository '${{ github.repository }}'.
+          Your mission is to modernize and improve ALL labels in this repository so they
+          look professional, consistent, and include relevant emojis.
+          All label names and descriptions MUST be in English.
+
+          DRY RUN MODE: $DRY_RUN
+          - If 'true': ONLY analyze and report what changes you WOULD make. DO NOT modify any labels.
+          - If 'false': Apply all changes.
+
+          Follow these steps IN ORDER:
+
+          ──────────────────────────────────────────────
+          STEP 1 — UNDERSTAND THE PROJECT
+          ──────────────────────────────────────────────
+          - Read the repository README to understand what this project is about.
+          - Scan the source code to identify languages, frameworks, and technologies used.
+          - This context helps you create technology-specific labels if needed.
+
+          ──────────────────────────────────────────────
+          STEP 2 — LIST ALL CURRENT LABELS
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to list ALL existing labels in this repository.
+          For each label, note: name, description, color, and whether it has an emoji.
+
+          ──────────────────────────────────────────────
+          STEP 3 — CHECK LABEL USAGE
+          ──────────────────────────────────────────────
+          For each existing label, check if it is used on any issues, PRs, or discussions.
+          CRITICAL: labels in use must be RENAMED (not deleted and recreated) to preserve
+          associations. Labels NOT in use can be safely deleted and recreated.
+
+          ──────────────────────────────────────────────
+          STEP 4 — DESIGN THE NEW LABEL SET
+          ──────────────────────────────────────────────
+          Create a beautified version of each label:
+
+          NAMING: Every label starts with a relevant emoji + space + lowercase name with hyphens.
+          Examples: '🐛 bug', '✨ enhancement', '📖 documentation', '🔒 security',
+          '⚡ performance', '🧪 testing', '🏗️ architecture', '🎨 design',
+          '♻️ refactoring', '🔧 configuration', '🚀 deployment', '⬆️ dependencies',
+          '❓ question', '👋 good first issue', '🚧 wip', '💥 breaking-change',
+          '🤖 copilot-suggestion'
+
+          DESCRIPTIONS: Every label MUST have a clear English description.
+
+          COLORS (consistent, meaningful scheme):
+          - Bugs: red (d73a4a)      - Enhancements: green (0e8a16)
+          - Documentation: blue (0075ca)  - Security: orange (f97316)
+          - Performance: yellow (eab308)  - Testing: purple (a855f7)
+          - Design/UX: pink (ec4899)      - Infrastructure: gray (6b7280)
+          - Questions: teal (14b8a6)      - Copilot/AI: violet (7057ff)
+
+          Add technology-specific labels if they make sense (e.g., '🅰️ angular', '🐳 docker').
+
+          ──────────────────────────────────────────────
+          STEP 5 — GENERATE AND OPTIONALLY APPLY CHANGES
+          ──────────────────────────────────────────────
+          Create a clear plan of changes. If DRY RUN is 'true', print the plan and STOP.
+          If 'false': apply all changes using the GitHub MCP Server:
+          - RENAME labels in use (preserves associations)
+          - DELETE and RECREATE labels not in use
+          - CREATE new labels
+
+          ──────────────────────────────────────────────
+          STEP 6 — FINAL REPORT
+          ──────────────────────────────────────────────
+          Print a summary: total before/after, renamed, deleted, created, kept as-is.
+
+          IMPORTANT:
+          - NEVER delete a label that is in use — always rename/update it.
+          - Keep total labels reasonable (15-25 for most repos).
+          - Do NOT create duplicates.
+          " --allow-all-tools --model "$MODEL"
+
+          echo "✅ Label beautification completed"

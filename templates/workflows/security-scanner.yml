@@ -1,0 +1,160 @@
+# ──────────────────────────────────────────────────────────────
+# 🔒 Security Scanner — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# AI-powered security analysis that scans the codebase for
+# vulnerabilities, misconfigurations, and security best
+# practices. Creates issues for findings.
+# ──────────────────────────────────────────────────────────────
+
+name: 🔒 Security Scanner
+
+on:
+  schedule:
+    - cron: "0 6 * * 3" # Every Wednesday at 6:00 UTC
+
+permissions:
+  contents: read
+  issues: write
+  security-events: read
+
+concurrency:
+  group: security-scanner
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: 🔒 AI Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 📦 Install GitHub Copilot CLI
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 🔒 Perform AI security scan
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          SCAN_SCOPE: ${{ inputs.scan_scope || 'full' }}
+          CREATE_ISSUES: ${{ inputs.create_issues || 'true' }}
+          MODEL: ${{ inputs.model || 'claude-sonnet-4' }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          copilot -p "
+          You are a Security Scanner for the repository '${{ github.repository }}'.
+          Perform a thorough security analysis of the codebase.
+
+          SCAN CONFIGURATION:
+          - Scope: $SCAN_SCOPE
+          - Create issues: $CREATE_ISSUES
+
+          Follow these steps IN ORDER:
+
+          ──────────────────────────────────────────────
+          STEP 1 — UNDERSTAND THE PROJECT
+          ──────────────────────────────────────────────
+          - Read the repository README to understand the tech stack.
+          - Identify the programming languages, frameworks, and dependencies used.
+          - Check for existing security configurations (.env.example, security policies, etc.)
+
+          ──────────────────────────────────────────────
+          STEP 2 — CHECK FOR EXISTING SECURITY ISSUES
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to list existing issues with security-related labels.
+          Note what has already been reported to avoid duplicates.
+
+          ──────────────────────────────────────────────
+          STEP 3 — SCAN THE CODEBASE
+          ──────────────────────────────────────────────
+          Based on the SCAN_SCOPE, analyze:
+
+          **Code Security (if scope is 'full' or 'code'):**
+          - SQL injection, XSS, command injection vulnerabilities
+          - Insecure deserialization
+          - Path traversal vulnerabilities
+          - Missing input validation and sanitization
+          - Insecure cryptographic practices (weak hashing, hardcoded keys)
+          - Improper error handling (stack traces exposed, sensitive data in logs)
+          - Race conditions and TOCTOU vulnerabilities
+          - Insecure file operations
+          - Missing authentication/authorization checks
+
+          **Dependency Security (if scope is 'full' or 'dependencies'):**
+          - Check package.json, requirements.txt, Gemfile, go.mod, etc. for known vulnerabilities
+          - Look for outdated packages with known CVEs
+          - Check for unnecessary dependencies that increase attack surface
+
+          **Configuration Security (if scope is 'full' or 'configuration'):**
+          - Insecure default configurations
+          - Missing security headers (for web apps)
+          - Overly permissive CORS settings
+          - Missing rate limiting
+          - Insecure cookie settings
+          - Debug mode enabled in production configs
+
+          **Secrets Detection (if scope is 'full' or 'secrets'):**
+          - Hardcoded API keys, tokens, passwords
+          - Secrets in configuration files
+          - .env files committed to the repository
+          - Private keys or certificates in the codebase
+
+          ──────────────────────────────────────────────
+          STEP 4 — ASSESS FINDINGS
+          ──────────────────────────────────────────────
+          For each finding, assess:
+          - Severity: 🔴 Critical / 🟠 High / 🟡 Medium / 🟢 Low
+          - CVSS score estimate if applicable
+          - Exploitability: How easy is it to exploit?
+          - Impact: What could an attacker do?
+          - Remediation: How to fix it?
+
+          ──────────────────────────────────────────────
+          STEP 5 — CREATE ISSUES (if configured)
+          ──────────────────────────────────────────────
+          If CREATE_ISSUES is 'true', for each finding that does NOT have an existing issue:
+          Use the GitHub MCP Server to create an issue with:
+          - Title: 🔒 [Severity] Brief description of the vulnerability
+          - Body:
+            ## 🔒 Security Finding
+            **Severity:** 🔴/🟠/🟡/🟢
+            **Category:** (e.g., Injection, Authentication, Configuration)
+            **File(s):** \`path/to/file.ext:L42\`
+
+            ## Description
+            (what the vulnerability is)
+
+            ## Impact
+            (what could happen if exploited)
+
+            ## Remediation
+            (how to fix it with code examples)
+
+            ---
+            > 🤖 *Found by Copilot Security Scanner*
+
+          - Labels: '🔒 security' + severity label
+
+          ──────────────────────────────────────────────
+          STEP 6 — SUMMARY REPORT
+          ──────────────────────────────────────────────
+          Print a security report summary:
+          - Total findings by severity
+          - Issues created (if any)
+          - Overall security posture assessment
+          - Top 3 recommended actions
+
+          IMPORTANT:
+          - Do NOT report false positives — only report real, actionable findings.
+          - Be specific with file paths and line numbers.
+          - Provide concrete remediation steps with code examples.
+          - Do NOT create duplicate issues.
+          - Focus on the OWASP Top 10 categories.
+          " --allow-all-tools --model "$MODEL"
+
+          echo "✅ Security scan completed"

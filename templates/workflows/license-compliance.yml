@@ -1,0 +1,144 @@
+# ──────────────────────────────────────────────────────────────
+# ⚖️ License Compliance — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Checks that new dependencies use approved licenses. Detects
+# package manager, lists all dependency licenses, compares
+# against allowed list, and comments on PR with violations.
+# ──────────────────────────────────────────────────────────────
+
+name: ⚖️ License Compliance
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: license-compliance-${{ github.event.pull_request.number || 'manual' }}
+  cancel-in-progress: true
+
+jobs:
+  check-licenses:
+    name: ⚖️ Check Licenses
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 📦 Install GitHub Copilot CLI
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: ⚖️ Check license compliance with AI
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          ALLOWED_LICENSES: ${{ inputs.allowed_licenses || 'MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,0BSD' }}
+          FAIL_ON_VIOLATION: ${{ inputs.fail_on_violation || 'true' }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          MODEL: ${{ inputs.model || 'claude-sonnet-4' }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          copilot -p "
+          You are a License Compliance Checker for the repository '${{ github.repository }}'.
+          Your job is to verify that all dependency licenses are on the approved list.
+
+          CONFIGURATION:
+          - Allowed Licenses: $ALLOWED_LICENSES
+          - Fail on Violation: $FAIL_ON_VIOLATION
+          - PR Number: $PR_NUMBER
+
+          Follow these steps IN ORDER:
+
+          ──────────────────────────────────────────────
+          STEP 1 — DETECT PACKAGE MANAGERS
+          ──────────────────────────────────────────────
+          Scan the repository for dependency manifests:
+          - package.json → npm/yarn/pnpm
+          - requirements.txt / pyproject.toml → pip/poetry
+          - go.mod → Go modules
+          - Cargo.toml → Cargo (Rust)
+          - mix.exs → Mix (Elixir)
+          - Gemfile → Bundler (Ruby)
+          - composer.json → Composer (PHP)
+          - pom.xml / build.gradle → Maven/Gradle (Java)
+
+          ──────────────────────────────────────────────
+          STEP 2 — LIST ALL DEPENDENCIES AND LICENSES
+          ──────────────────────────────────────────────
+          For each detected package manager:
+          - List all direct dependencies.
+          - Determine the license for each dependency by reading
+            the package metadata, LICENSE file, or package registry.
+          - Use SPDX identifiers where possible.
+          - Note any dependencies with unknown or missing licenses.
+
+          ──────────────────────────────────────────────
+          STEP 3 — CHECK AGAINST ALLOWED LIST
+          ──────────────────────────────────────────────
+          Parse the allowed licenses: $ALLOWED_LICENSES
+          For each dependency, check if its license is in the allowed list.
+          Flag violations:
+          - 🔴 VIOLATION: license not in allowed list
+          - 🟡 WARNING: license could not be determined
+          - 🟢 OK: license is allowed
+
+          ──────────────────────────────────────────────
+          STEP 4 — COMPILE REPORT
+          ──────────────────────────────────────────────
+          Create a report:
+
+          ## ⚖️ License Compliance Report
+
+          ### Allowed Licenses
+          $ALLOWED_LICENSES
+
+          ### 🔴 Violations
+          | Package | Version | License | Package Manager |
+          |---------|---------|---------|-----------------|
+          | pkg-name | 1.0.0 | GPL-3.0 | npm |
+
+          ### 🟡 Unknown Licenses
+          | Package | Version | Package Manager |
+          |---------|---------|-----------------|
+
+          ### ✅ Summary
+          - **X** dependencies scanned
+          - **Y** compliant
+          - **Z** violations
+          - **W** unknown
+
+          ──────────────────────────────────────────────
+          STEP 5 — COMMENT ON PR
+          ──────────────────────────────────────────────
+          If PR_NUMBER is set:
+          - Use the GitHub MCP Server to comment on PR #$PR_NUMBER
+            with the report.
+          - If violations exist and FAIL_ON_VIOLATION is 'true',
+            clearly state that the check has FAILED.
+          - If no violations, post an approval summary.
+
+          ──────────────────────────────────────────────
+          STEP 6 — SET EXIT CODE
+          ──────────────────────────────────────────────
+          If FAIL_ON_VIOLATION is 'true' and violations were found,
+          exit with code 1 to fail the workflow.
+
+          IMPORTANT:
+          - Treat dual-licensed packages as compliant if ANY license
+            matches the allowed list.
+          - Common permissive licenses (MIT, ISC, BSD) are generally
+            compatible — note this if flagging a borderline case.
+          - LGPL is often acceptable for dynamic linking — note context.
+          - Always suggest alternatives for non-compliant packages
+            when possible.
+          " --allow-all-tools --model "$MODEL"
+
+          echo "✅ License compliance check complete"

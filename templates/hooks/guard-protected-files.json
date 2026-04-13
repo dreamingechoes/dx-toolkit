@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": ".github/hooks/scripts/guard-protected-files.sh",
+        "timeout": 5,
+        "description": "Prevent agent from modifying protected files without confirmation"
+      }
+    ]
+  }
+}

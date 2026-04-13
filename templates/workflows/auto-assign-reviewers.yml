@@ -1,0 +1,103 @@
+# ──────────────────────────────────────────────────────────────
+# 👥 Auto Assign Reviewers — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Analyzes PR diffs, checks CODEOWNERS and git blame to find
+# the most relevant reviewers, then requests reviews and
+# comments on the PR explaining why each was assigned.
+# ──────────────────────────────────────────────────────────────
+
+name: 👥 Auto Assign Reviewers
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: auto-assign-reviewers-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  assign-reviewers:
+    name: 👥 Assign Reviewers
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 📦 Install GitHub Copilot CLI
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 👥 Analyze and assign reviewers
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          MAX_REVIEWERS: "2"
+          MODEL: "claude-sonnet-4"
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          copilot -p "
+          You are a Reviewer Assignment Agent for the repository '${{ github.repository }}'.
+          Your goal is to find the best reviewers for PR #$PR_NUMBER.
+
+          CONFIGURATION:
+          - PR Author: @$PR_AUTHOR (exclude from reviewer candidates)
+          - Max reviewers to assign: $MAX_REVIEWERS
+
+          Follow these steps IN ORDER:
+
+          ──────────────────────────────────────────────
+          STEP 1 — IDENTIFY CHANGED FILES
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to get the list of files changed in PR #$PR_NUMBER.
+          Group them by directory/module to understand which areas of the codebase are affected.
+
+          ──────────────────────────────────────────────
+          STEP 2 — FIND CODE OWNERS
+          ──────────────────────────────────────────────
+          Check if a CODEOWNERS file exists (at .github/CODEOWNERS, CODEOWNERS, or docs/CODEOWNERS).
+          If it exists, parse it to find owners for the changed file paths.
+          Also run 'git log --format=%an' on the changed files to find recent contributors.
+
+          ──────────────────────────────────────────────
+          STEP 3 — RANK CANDIDATES
+          ──────────────────────────────────────────────
+          Score each candidate by:
+          1. CODEOWNERS match (highest weight)
+          2. Number of recent commits to changed files (git blame/log)
+          3. Breadth of coverage across the changed areas
+
+          Exclude the PR author ($PR_AUTHOR) from candidates.
+          Select the top $MAX_REVIEWERS reviewers.
+
+          ──────────────────────────────────────────────
+          STEP 4 — REQUEST REVIEWS
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to request reviews from the selected reviewers on PR #$PR_NUMBER.
+
+          ──────────────────────────────────────────────
+          STEP 5 — COMMENT ON PR
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to add a comment on PR #$PR_NUMBER:
+
+          > 👥 **Auto-Assigned Reviewers**
+          >
+          > | Reviewer | Reason |
+          > |----------|--------|
+          > | @reviewer1 | CODEOWNERS for src/api/**, 15 commits to changed files |
+          > | @reviewer2 | Recent contributor to lib/utils, 8 commits this month |
+          >
+          > _Assigned based on CODEOWNERS rules and recent commit history._
+          " --model "$MODEL"

@@ -1,0 +1,58 @@
+# Path-based label rules for actions/labeler
+# See: https://github.com/actions/labeler
+
+agents:
+  - changed-files:
+      - any-glob-to-any-file: ".github/agents/**"
+
+skills:
+  - changed-files:
+      - any-glob-to-any-file: ".github/skills/**"
+
+prompts:
+  - changed-files:
+      - any-glob-to-any-file: ".github/prompts/**"
+
+instructions:
+  - changed-files:
+      - any-glob-to-any-file: ".github/instructions/**"
+
+hooks:
+  - changed-files:
+      - any-glob-to-any-file: ".github/hooks/**"
+
+workflows:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/**"
+          - "templates/workflows/**"
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "**/*.md"
+          - "!CHANGELOG.md"
+
+references:
+  - changed-files:
+      - any-glob-to-any-file: ".github/references/**"
+
+examples:
+  - changed-files:
+      - any-glob-to-any-file: "examples/**"
+
+scripts:
+  - changed-files:
+      - any-glob-to-any-file: "scripts/**"
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/ci.yml"
+          - ".github/workflows/pr-checks.yml"
+          - ".github/workflows/link-checker.yml"
+          - ".github/workflows/stale.yml"
+          - ".github/workflows/welcome.yml"
+          - ".github/labeler.yml"
+          - "package.json"

@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": ".github/hooks/scripts/test-companion-reminder.sh",
+        "timeout": 5,
+        "description": "Remind to create or update tests when adding new source files"
+      }
+    ]
+  }
+}

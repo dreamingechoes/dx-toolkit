@@ -1,0 +1,130 @@
+# ──────────────────────────────────────────────────────────────
+# 👋 First Contributor Welcome — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Welcomes first-time contributors with a personalized message,
+# assigns appropriate labels, and provides helpful resources.
+# ──────────────────────────────────────────────────────────────
+
+name: 👋 First Contributor Welcome
+
+on:
+  pull_request_target:
+    types: [opened]
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: welcome-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  welcome:
+    name: 👋 Welcome First-Time Contributor
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 📦 Install GitHub Copilot CLI
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 👋 Check and welcome first-time contributor
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          ITEM_TYPE: ${{ github.event_name == 'issues' && 'issue' || 'pull_request' }}
+          ITEM_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          ITEM_AUTHOR: ${{ github.event.issue.user.login || github.event.pull_request.user.login }}
+          MODEL: "claude-sonnet-4"
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          copilot -p "
+          You are a Contributor Welcome Bot for the repository '${{ github.repository }}'.
+          Your job is to welcome first-time contributors with a helpful, warm message.
+
+          DETAILS:
+          - Type: $ITEM_TYPE
+          - Number: #$ITEM_NUMBER
+          - Author: @$ITEM_AUTHOR
+
+          Follow these steps:
+
+          ──────────────────────────────────────────────
+          STEP 1 — CHECK IF FIRST-TIME CONTRIBUTOR
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to check if @$ITEM_AUTHOR has previously:
+          - Opened any issues in this repository
+          - Opened any pull requests in this repository
+          - Made any commits to this repository
+
+          If they have previous contributions, STOP HERE — do not leave a comment.
+          Only proceed if this is their FIRST contribution to this repository.
+
+          ──────────────────────────────────────────────
+          STEP 2 — UNDERSTAND THE PROJECT
+          ──────────────────────────────────────────────
+          - Read the repository README.
+          - Check if CONTRIBUTING.md exists.
+          - Check if there is a CODE_OF_CONDUCT.md.
+          - Look for 'good first issue' labeled issues.
+
+          ──────────────────────────────────────────────
+          STEP 3 — PERSONALIZE THE WELCOME
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to briefly check @$ITEM_AUTHOR's GitHub profile
+          to personalize the welcome (e.g., mention shared interests or languages).
+
+          ──────────────────────────────────────────────
+          STEP 4 — LEAVE A WELCOME COMMENT
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to add a comment on $ITEM_TYPE #$ITEM_NUMBER:
+
+          For a first-time ISSUE:
+          > 👋 **Welcome to the project, @$ITEM_AUTHOR!**
+          >
+          > Thanks for opening your first issue here! We appreciate your contribution.
+          >
+          > **Helpful resources:**
+          > - 📖 [README](link) — Project overview and setup
+          > - (CONTRIBUTING.md link if exists)
+          > - (CODE_OF_CONDUCT.md link if exists)
+          >
+          > A maintainer will review this soon. In the meantime, feel free to
+          > explore the codebase and check out other open issues!
+          >
+          > ---
+          > 🤖 *Welcome message by Copilot*
+
+          For a first-time PR:
+          > 👋 **Welcome to the project, @$ITEM_AUTHOR!**
+          >
+          > Thanks for your first pull request! We are excited to review your contribution.
+          >
+          > **While you wait for review:**
+          > - Make sure all CI checks pass ✅
+          > - (mention CONTRIBUTING.md guidelines if exists)
+          > - Feel free to self-review your changes
+          >
+          > A maintainer will review this as soon as possible!
+          >
+          > ---
+          > 🤖 *Welcome message by Copilot*
+
+          IMPORTANT:
+          - Only welcome if this is truly their FIRST contribution.
+          - Keep the message warm but concise.
+          - Include real links to project resources.
+          - Do NOT be overly verbose.
+          " --allow-all-tools --model "$MODEL"
+
+          echo "✅ First contributor check completed for $ITEM_TYPE #$ITEM_NUMBER"

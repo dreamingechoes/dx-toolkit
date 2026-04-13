@@ -1,0 +1,150 @@
+# ──────────────────────────────────────────────────────────────
+# 📚 API Docs Generator — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Scans API routes, controllers, and handlers to generate
+# markdown documentation. Parses OpenAPI specs if available,
+# otherwise uses Copilot CLI to analyze code. Commits updated
+# docs to the repository.
+# ──────────────────────────────────────────────────────────────
+
+name: 📚 API Docs Generator
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/routes/**"
+      - "**/controllers/**"
+      - "**/handlers/**"
+      - "**/openapi*"
+      - "**/swagger*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: api-docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate-docs:
+    name: 📚 Generate API Docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: 📦 Install GitHub Copilot CLI
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 📚 Generate API documentation
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          API_SOURCE: ${{ inputs.api_source || '' }}
+          OUTPUT_PATH: ${{ inputs.output_path || 'docs/api' }}
+          MODEL: ${{ inputs.model || 'claude-sonnet-4' }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          # Ensure output directory exists
+          mkdir -p "$OUTPUT_PATH"
+
+          copilot -p "
+          You are an API Documentation Generator for the repository '${{ github.repository }}'.
+          Generate comprehensive markdown API documentation.
+
+          CONFIGURATION:
+          - API source hint: $API_SOURCE
+          - Output path: $OUTPUT_PATH
+
+          Follow these steps IN ORDER:
+
+          ──────────────────────────────────────────────
+          STEP 1 — DETECT API FRAMEWORK
+          ──────────────────────────────────────────────
+          Scan the repository to identify:
+          - The web framework (Express, FastAPI, Phoenix, Rails, Spring, etc.)
+          - Existing OpenAPI/Swagger specs (openapi.json/yaml, swagger.json/yaml)
+          - Route/controller/handler directories
+
+          If an API source path was provided ('$API_SOURCE'), start there.
+          Otherwise, search common locations:
+          - src/routes/, src/controllers/, src/handlers/
+          - app/controllers/, app/routes/
+          - lib/*_web/controllers/, lib/*_web/router.ex
+          - routes/, controllers/, handlers/, api/
+
+          ──────────────────────────────────────────────
+          STEP 2 — PARSE EXISTING SPECS
+          ──────────────────────────────────────────────
+          If an OpenAPI/Swagger spec exists, parse it to extract:
+          - All endpoints (method, path, summary)
+          - Request parameters (query, path, body)
+          - Request/response schemas with examples
+          - Authentication requirements
+          - Error responses
+
+          ──────────────────────────────────────────────
+          STEP 3 — ANALYZE CODE
+          ──────────────────────────────────────────────
+          For each route/controller/handler file:
+          - Extract HTTP method and path
+          - Identify request parameters and body schema
+          - Determine response format and status codes
+          - Find authentication/authorization middleware
+          - Note any rate limiting or validation rules
+
+          ──────────────────────────────────────────────
+          STEP 4 — GENERATE DOCUMENTATION
+          ──────────────────────────────────────────────
+          Create/update markdown files in '$OUTPUT_PATH/':
+
+          **$OUTPUT_PATH/README.md** — API overview with:
+          - Base URL and versioning info
+          - Authentication methods
+          - Common headers
+          - Error response format
+          - Rate limiting details
+          - Table of all endpoints
+
+          **$OUTPUT_PATH/<resource>.md** — Per-resource docs with:
+          - Endpoint table for the resource
+          - Detailed docs per endpoint:
+            - Method + Path
+            - Description
+            - Parameters (path, query, header, body)
+            - Request example (curl + JSON body)
+            - Response example (status + JSON body)
+            - Error responses
+            - Auth requirements
+
+          ──────────────────────────────────────────────
+          STEP 5 — WRITE FILES
+          ──────────────────────────────────────────────
+          Write all generated documentation files to disk in '$OUTPUT_PATH/'.
+          Use the filesystem tools to create/update the markdown files.
+          " --model "$MODEL"
+
+      - name: 📝 Commit updated docs
+        env:
+          OUTPUT_PATH: ${{ inputs.output_path || 'docs/api' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add "$OUTPUT_PATH"
+
+          if git diff --staged --quiet; then
+            echo "ℹ️ No documentation changes to commit."
+          else
+            git commit -m "docs: update API documentation [skip ci]"
+            git push
+            echo "✅ API documentation updated and committed."
+          fi

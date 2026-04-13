@@ -1,0 +1,138 @@
+# ──────────────────────────────────────────────────────────────
+# 📦 Dependency Update Checker — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Scans project for outdated dependencies and known
+# vulnerabilities. Detects package manager automatically and
+# creates an issue summarizing findings organized by severity.
+# ──────────────────────────────────────────────────────────────
+
+name: 📦 Dependency Update Checker
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: dependency-checker-${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  check-dependencies:
+    name: 📦 Check Dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 📦 Install GitHub Copilot CLI
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 📦 Scan dependencies with AI
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          SEVERITY_THRESHOLD: ${{ inputs.severity_threshold || 'high' }}
+          CREATE_ISSUES: ${{ inputs.create_issues || 'true' }}
+          MODEL: ${{ inputs.model || 'claude-sonnet-4' }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          copilot -p "
+          You are a Dependency Update Checker for the repository '${{ github.repository }}'.
+          Your job is to find outdated and vulnerable dependencies across all package managers.
+
+          CONFIGURATION:
+          - Severity Threshold: $SEVERITY_THRESHOLD
+          - Create Issues: $CREATE_ISSUES
+
+          Follow these steps IN ORDER:
+
+          ──────────────────────────────────────────────
+          STEP 1 — DETECT PACKAGE MANAGERS
+          ──────────────────────────────────────────────
+          Scan the repository root and subdirectories for:
+          - package.json / package-lock.json / yarn.lock / pnpm-lock.yaml → npm/yarn/pnpm
+          - requirements.txt / Pipfile / pyproject.toml / poetry.lock → pip/pipenv/poetry
+          - go.mod / go.sum → Go modules
+          - Cargo.toml / Cargo.lock → Cargo (Rust)
+          - mix.exs / mix.lock → Mix (Elixir)
+          - Gemfile / Gemfile.lock → Bundler (Ruby)
+          - composer.json / composer.lock → Composer (PHP)
+          - pom.xml / build.gradle → Maven/Gradle (Java)
+
+          List all detected package managers.
+
+          ──────────────────────────────────────────────
+          STEP 2 — CHECK FOR OUTDATED PACKAGES
+          ──────────────────────────────────────────────
+          For each detected package manager, list the dependencies and their
+          current versions from the lock file or manifest.
+          Compare against the latest available versions.
+          Flag packages that are:
+          - 1+ major version behind → HIGH priority
+          - 3+ minor versions behind → MEDIUM priority
+          - Only patch versions behind → LOW priority
+
+          ──────────────────────────────────────────────
+          STEP 3 — CHECK FOR VULNERABILITIES
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to check for security advisories
+          affecting the project's dependencies.
+          Cross-reference with known CVE databases.
+          Classify by severity: CRITICAL, HIGH, MEDIUM, LOW.
+
+          ──────────────────────────────────────────────
+          STEP 4 — COMPILE REPORT
+          ──────────────────────────────────────────────
+          Create a report organized by severity:
+
+          ## 📦 Dependency Update Report — $(date +%Y-%m-%d)
+
+          ### 🔴 Critical
+          | Package | Current | Latest | Vulnerability | Advisory |
+          |---------|---------|--------|---------------|----------|
+
+          ### 🟠 High
+          (same table format)
+
+          ### 🟡 Medium
+          (same table format — only if threshold allows)
+
+          ### 🟢 Low
+          (same table format — only if threshold allows)
+
+          ### 📊 Summary
+          - **X** packages scanned
+          - **Y** outdated
+          - **Z** with known vulnerabilities
+          - Package managers: (list)
+
+          Filter out entries below the SEVERITY_THRESHOLD.
+
+          ──────────────────────────────────────────────
+          STEP 5 — CREATE ISSUE (if enabled)
+          ──────────────────────────────────────────────
+          If CREATE_ISSUES is 'true' and there are findings at or above
+          the severity threshold:
+          - Use the GitHub MCP Server to create an issue.
+          - Title: 📦 Dependency Update Report — <date>
+          - Body: the compiled report from Step 4.
+          - Labels: dependencies, security (if vulnerabilities found).
+          - If a similar open issue already exists, update it instead.
+
+          IMPORTANT:
+          - Only report actionable findings.
+          - Include direct links to advisories when available.
+          - Suggest specific version upgrades where possible.
+          - Note any breaking changes expected from major upgrades.
+          " --allow-all-tools --model "$MODEL"
+
+          echo "✅ Dependency check complete"

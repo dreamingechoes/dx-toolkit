@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": ".github/hooks/scripts/console-log-detector.sh",
+        "timeout": 5,
+        "description": "Warn about debug statements (console.log, debugger, print) left in edited files"
+      }
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": ".github/hooks/scripts/commit-message-validator.sh",
+        "timeout": 5,
+        "description": "Validate commit messages follow Conventional Commits format before committing"
+      }
+    ]
+  }
+}

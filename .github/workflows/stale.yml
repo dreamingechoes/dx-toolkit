@@ -1,0 +1,54 @@
+# ──────────────────────────────────────────────────────────────
+# 🧹 Stale — Close Inactive Issues & PRs
+# ──────────────────────────────────────────────────────────────
+# Marks issues and PRs as stale after 30 days of inactivity,
+# then closes them after 7 more days. Keeps the backlog clean.
+# ──────────────────────────────────────────────────────────────
+
+name: 🧹 Stale
+
+on:
+  schedule:
+    # Every day at 06:00 UTC
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: stale
+  cancel-in-progress: true
+
+jobs:
+  stale:
+    name: 🧹 Mark Stale
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 🧹 Process stale issues and PRs
+        uses: actions/stale@v9
+        with:
+          stale-issue-message: >
+            This issue has been inactive for 30 days. It will be closed in 7 days
+            unless there's new activity. If this is still relevant, comment to keep
+            it open.
+          stale-pr-message: >
+            This PR has been inactive for 30 days. It will be closed in 7 days
+            unless there's new activity. If you're still working on this, comment
+            or push a commit to keep it open.
+          close-issue-message: >
+            Closed due to inactivity. Feel free to reopen if this is still relevant.
+          close-pr-message: >
+            Closed due to inactivity. Feel free to reopen if you'd like to continue
+            this work.
+          days-before-stale: 30
+          days-before-close: 7
+          stale-issue-label: stale
+          stale-pr-label: stale
+          exempt-issue-labels: "pinned,security,bug,help wanted"
+          exempt-pr-labels: "pinned,security"
+          remove-stale-when-updated: true
+          operations-per-run: 100

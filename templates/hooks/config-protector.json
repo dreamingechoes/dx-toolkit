@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": ".github/hooks/scripts/config-protector.sh",
+        "timeout": 5,
+        "description": "Block modifications to linter and formatter configs — fix the code, not the rules"
+      }
+    ]
+  }
+}

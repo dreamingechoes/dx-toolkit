@@ -1,0 +1,145 @@
+# ──────────────────────────────────────────────────────────────
+# 📋 Auto Changelog — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Generates CHANGELOG.md from Conventional Commits between
+# releases using Keep a Changelog format. Categorizes commits
+# into Added, Changed, Fixed, Removed, Security, Deprecated.
+# ──────────────────────────────────────────────────────────────
+
+name: 📋 Auto Changelog
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-changelog-${{ github.event.release.tag_name || 'manual' }}
+  cancel-in-progress: true
+
+jobs:
+  generate-changelog:
+    name: 📋 Generate Changelog
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 📦 Install GitHub Copilot CLI
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 📋 Generate changelog with AI
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ inputs.tag_name || github.event.release.tag_name || '' }}
+          INCLUDE_PRE_RELEASES: ${{ inputs.include_pre_releases || 'false' }}
+          MODEL: ${{ inputs.model || 'claude-sonnet-4' }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          copilot -p "
+          You are a Changelog Generator for the repository '${{ github.repository }}'.
+          Your job is to generate a CHANGELOG.md following the Keep a Changelog format
+          (https://keepachangelog.com).
+
+          CONFIGURATION:
+          - Current Tag: $TAG_NAME (if empty, use the latest tag)
+          - Include Pre-releases: $INCLUDE_PRE_RELEASES
+
+          Follow these steps IN ORDER:
+
+          ──────────────────────────────────────────────
+          STEP 1 — IDENTIFY TAG RANGE
+          ──────────────────────────────────────────────
+          - List all git tags in chronological order.
+          - If TAG_NAME is provided, use it as the current release.
+          - Otherwise, detect the latest tag automatically.
+          - Find the previous tag to determine the range.
+          - If INCLUDE_PRE_RELEASES is 'false', skip pre-release tags
+            (those containing -alpha, -beta, -rc, etc.).
+
+          ──────────────────────────────────────────────
+          STEP 2 — COLLECT COMMITS
+          ──────────────────────────────────────────────
+          Run: git log <previous_tag>..<current_tag> --pretty=format:'%H %s'
+          Collect ALL commits between the two tags.
+          Also check for merged PRs via the GitHub MCP Server.
+
+          ──────────────────────────────────────────────
+          STEP 3 — CATEGORIZE BY CONVENTIONAL COMMITS
+          ──────────────────────────────────────────────
+          Parse each commit message and categorize:
+          - feat:     → ### Added
+          - fix:      → ### Fixed
+          - docs:     → ### Changed (documentation)
+          - refactor: → ### Changed
+          - perf:     → ### Changed (performance)
+          - BREAKING CHANGE / !: → ### Removed or ### Changed (breaking)
+          - security: → ### Security
+          - deprecate: → ### Deprecated
+          - revert:   → ### Removed
+          - chore/ci/build/test/style: → skip unless significant
+
+          For non-conventional commits, infer the category from the message.
+
+          ──────────────────────────────────────────────
+          STEP 4 — READ EXISTING CHANGELOG
+          ──────────────────────────────────────────────
+          - Read the current CHANGELOG.md if it exists.
+          - Preserve all existing entries — only add the new release section.
+          - If no CHANGELOG.md exists, create one from scratch with a header.
+
+          ──────────────────────────────────────────────
+          STEP 5 — WRITE CHANGELOG
+          ──────────────────────────────────────────────
+          Format the new release section as:
+
+          ## [<version>] - <YYYY-MM-DD>
+
+          ### Added
+          - Description of feature ([#PR](link)) by @author
+
+          ### Fixed
+          - Description of fix ([#PR](link)) by @author
+
+          ### Changed
+          - Description of change
+
+          ### Security
+          - Description of security fix
+
+          ### Deprecated
+          - Description of deprecated feature
+
+          ### Removed
+          - Description of removed feature
+
+          Insert this section below the header and above previous releases.
+          Only include categories that have entries.
+
+          ──────────────────────────────────────────────
+          STEP 6 — COMMIT THE CHANGELOG
+          ──────────────────────────────────────────────
+          - Write the updated CHANGELOG.md to disk.
+          - Stage and commit with message: docs: update CHANGELOG.md for <version>
+          - Push to the default branch.
+
+          IMPORTANT:
+          - Use clear, user-facing descriptions — not raw commit messages.
+          - Group related commits into a single entry when appropriate.
+          - Always credit PR authors.
+          - Include links to PRs and issues where possible.
+          - Follow Keep a Changelog strictly: categories must be exactly
+            Added, Changed, Deprecated, Removed, Fixed, Security.
+          " --allow-all-tools --model "$MODEL"
+
+          echo "✅ CHANGELOG.md updated"

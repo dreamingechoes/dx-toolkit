@@ -1,0 +1,161 @@
+# ──────────────────────────────────────────────────────────────
+# 🐳 Container Image Scanner — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Builds a Docker image and scans it with Trivy for CVEs.
+# Uses Copilot CLI to analyze findings and create a summary
+# issue with remediation advice grouped by severity.
+# ──────────────────────────────────────────────────────────────
+
+name: 🐳 Container Image Scanner
+
+on:
+  push:
+    paths:
+      - "**/Dockerfile*"
+      - "**/docker-compose*"
+
+permissions:
+  contents: read
+  issues: write
+  security-events: write
+
+concurrency:
+  group: container-scanner-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan-image:
+    name: 🐳 Scan Container Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 🐳 Build Docker image
+        env:
+          DOCKERFILE: ${{ inputs.dockerfile_path || 'Dockerfile' }}
+        run: |
+          CONTEXT_DIR=$(dirname "$DOCKERFILE")
+          docker build -f "$DOCKERFILE" -t scan-target:latest "$CONTEXT_DIR"
+
+      - name: 🔍 Install and run Trivy
+        run: |
+          # Install Trivy
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
+          # Run scan and output JSON
+          trivy image \
+            --severity "${{ inputs.severity || 'HIGH,CRITICAL' }}" \
+            --format json \
+            --output trivy-results.json \
+            scan-target:latest || true
+
+          # Also generate a human-readable table
+          trivy image \
+            --severity "${{ inputs.severity || 'HIGH,CRITICAL' }}" \
+            --format table \
+            --output trivy-results.txt \
+            scan-target:latest || true
+
+          echo "--- Trivy Results Summary ---"
+          cat trivy-results.txt
+
+      - name: 📦 Install GitHub Copilot CLI
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 🐳 Analyze findings and create issue
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          SEVERITY: ${{ inputs.severity || 'HIGH,CRITICAL' }}
+          DOCKERFILE: ${{ inputs.dockerfile_path || 'Dockerfile' }}
+          MODEL: ${{ inputs.model || 'claude-sonnet-4' }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          # Check if there are any findings
+          VULN_COUNT=$(cat trivy-results.json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          count = sum(len(r.get('Vulnerabilities', [])) for r in data.get('Results', []))
+          print(count)
+          " 2>/dev/null || echo "0")
+
+          if [ "$VULN_COUNT" = "0" ]; then
+            echo "✅ No vulnerabilities found at severity level: $SEVERITY"
+            exit 0
+          fi
+
+          copilot -p "
+          You are a Container Security Analyst for the repository '${{ github.repository }}'.
+          Trivy found $VULN_COUNT vulnerabilities in the Docker image built from '$DOCKERFILE'.
+
+          SCAN CONFIGURATION:
+          - Dockerfile: $DOCKERFILE
+          - Severity filter: $SEVERITY
+          - Vulnerabilities found: $VULN_COUNT
+
+          The Trivy JSON results are in 'trivy-results.json' and a human-readable
+          table is in 'trivy-results.txt'. Read both files.
+
+          Follow these steps IN ORDER:
+
+          ──────────────────────────────────────────────
+          STEP 1 — PARSE RESULTS
+          ──────────────────────────────────────────────
+          Read trivy-results.json and categorize findings by:
+          - Severity (CRITICAL, HIGH, MEDIUM, LOW)
+          - Package name and installed version
+          - Fixed version (if available)
+          - CVE ID
+
+          ──────────────────────────────────────────────
+          STEP 2 — ANALYZE REMEDIATION
+          ──────────────────────────────────────────────
+          For each finding, determine:
+          - Can it be fixed by upgrading the base image?
+          - Can it be fixed by updating a specific package?
+          - Is the vulnerability exploitable in this context?
+          - What is the recommended fix?
+
+          Also read the Dockerfile to suggest base image improvements
+          (e.g., switching to Alpine, using a newer tag, multi-stage builds).
+
+          ──────────────────────────────────────────────
+          STEP 3 — CHECK FOR EXISTING ISSUES
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to list existing issues with the label 'container-security'.
+          Avoid creating duplicates.
+
+          ──────────────────────────────────────────────
+          STEP 4 — CREATE SUMMARY ISSUE
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to create an issue with:
+          - Title: '🐳 Container Security: $VULN_COUNT vulnerabilities found'
+          - Labels: 'container-security', 'security'
+          - Body organized by severity with a table of findings:
+
+          > ## 🐳 Container Image Security Report
+          >
+          > **Image:** Built from \`$DOCKERFILE\`
+          > **Scan date:** $(date +%Y-%m-%d)
+          > **Total findings:** $VULN_COUNT
+          >
+          > ### 🔴 Critical
+          > | CVE | Package | Installed | Fixed | Description |
+          > |-----|---------|-----------|-------|-------------|
+          > | ... | ... | ... | ... | ... |
+          >
+          > ### 🟠 High
+          > | CVE | Package | Installed | Fixed | Description |
+          > |-----|---------|-----------|-------|-------------|
+          > | ... | ... | ... | ... | ... |
+          >
+          > ### Recommended Actions
+          > 1. ...
+          > 2. ...
+          " --model "$MODEL"

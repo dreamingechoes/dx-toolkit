@@ -1,0 +1,52 @@
+# ──────────────────────────────────────────────────────────────
+# 🔗 Link Checker — Broken Link Detection
+# ──────────────────────────────────────────────────────────────
+# Scans all markdown files for broken internal and external
+# links. Runs on push to main and weekly on a schedule.
+# ──────────────────────────────────────────────────────────────
+
+name: 🔗 Link Checker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/*.md"
+  schedule:
+    # Every Monday at 09:00 UTC
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: link-checker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-links:
+    name: 🔗 Check Links
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 🔗 Check markdown links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --verbose
+            --no-progress
+            --accept 200,204,301,302,403,429
+            --exclude-path node_modules
+            --exclude '.*linkedin\.com.*'
+            --exclude '.*x\.com.*'
+            --exclude '.*twitter\.com.*'
+            --exclude 'mailto:.*'
+            --max-retries 3
+            --timeout 30
+            '**/*.md'
+          fail: true

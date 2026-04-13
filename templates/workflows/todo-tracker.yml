@@ -1,0 +1,160 @@
+# ──────────────────────────────────────────────────────────────
+# ✅ TODO Tracker — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Greps the codebase for TODO/FIXME/HACK comments, creates a
+# tracking issue with all findings organized by file. Copilot
+# CLI categorizes each by urgency and suggests priorities.
+# Optionally creates individual issues for each finding.
+# ──────────────────────────────────────────────────────────────
+
+name: ✅ TODO Tracker
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: todo-tracker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  track-todos:
+    name: ✅ Track TODOs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 🔍 Grep for TODO comments
+        id: grep
+        env:
+          KEYWORDS: ${{ inputs.keywords || 'TODO,FIXME,HACK,XXX,WARN' }}
+        run: |
+          # Build grep pattern from keywords
+          PATTERN=$(echo "$KEYWORDS" | sed 's/,/\\|/g')
+
+          # Search codebase, excluding common non-source directories
+          grep -rn \
+            --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" \
+            --include="*.py" --include="*.rb" --include="*.go" --include="*.rs" \
+            --include="*.ex" --include="*.exs" --include="*.java" --include="*.kt" \
+            --include="*.swift" --include="*.cs" --include="*.php" --include="*.vue" \
+            --include="*.svelte" --include="*.css" --include="*.scss" \
+            --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=vendor \
+            --exclude-dir=dist --exclude-dir=build --exclude-dir=_build \
+            --exclude-dir=deps --exclude-dir=target --exclude-dir=.next \
+            "$PATTERN" . > todo-findings.txt 2>/dev/null || true
+
+          FINDING_COUNT=$(wc -l < todo-findings.txt | xargs)
+          echo "count=$FINDING_COUNT" >> "$GITHUB_OUTPUT"
+
+          echo "Found $FINDING_COUNT TODO-type comments."
+          head -50 todo-findings.txt
+
+      - name: 📦 Install GitHub Copilot CLI
+        if: steps.grep.outputs.count > 0
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: ✅ Analyze and create tracking issue
+        if: steps.grep.outputs.count > 0
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          FINDING_COUNT: ${{ steps.grep.outputs.count }}
+          KEYWORDS: ${{ inputs.keywords || 'TODO,FIXME,HACK,XXX,WARN' }}
+          CREATE_ISSUES: ${{ inputs.create_issues || 'false' }}
+          MODEL: ${{ inputs.model || 'claude-sonnet-4' }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          copilot -p "
+          You are a TODO Tracker for the repository '${{ github.repository }}'.
+          Found $FINDING_COUNT TODO-type comments matching keywords: $KEYWORDS.
+
+          CONFIGURATION:
+          - Keywords: $KEYWORDS
+          - Create individual issues: $CREATE_ISSUES
+          - Findings file: todo-findings.txt
+
+          Follow these steps IN ORDER:
+
+          ──────────────────────────────────────────────
+          STEP 1 — PARSE FINDINGS
+          ──────────────────────────────────────────────
+          Read todo-findings.txt. Each line is formatted as:
+          ./path/to/file.ts:42:  // TODO: Fix this later
+
+          Parse each line to extract:
+          - File path
+          - Line number
+          - Keyword (TODO, FIXME, HACK, etc.)
+          - Comment text
+
+          Group findings by file.
+
+          ──────────────────────────────────────────────
+          STEP 2 — CATEGORIZE BY URGENCY
+          ──────────────────────────────────────────────
+          For each finding, assess urgency:
+
+          🔴 **Should fix now** — Security concerns, data loss risks, broken functionality,
+             race conditions, FIXME with context suggesting a bug
+
+          🟡 **Should fix soon** — HACK workarounds, technical debt that blocks features,
+             performance issues, deprecated API usage
+
+          🟢 **Nice to have** — Code quality improvements, refactoring ideas,
+             feature ideas, minor optimizations
+
+          ──────────────────────────────────────────────
+          STEP 3 — CHECK FOR EXISTING ISSUES
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to list existing issues with the label 'todo-tracker'.
+          Close superseded tracking issues (previous runs).
+
+          ──────────────────────────────────────────────
+          STEP 4 — CREATE TRACKING ISSUE
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to create a summary issue with:
+          - Title: '✅ TODO Tracker: $FINDING_COUNT items found'
+          - Labels: 'todo-tracker'
+          - Body:
+
+          > ## ✅ TODO Tracker Report
+          >
+          > Found **$FINDING_COUNT** TODO-type comments across the codebase.
+          >
+          > ### 🔴 Should Fix Now ($N items)
+          > | File | Line | Type | Comment |
+          > |------|------|------|---------|
+          > | src/auth.ts | 42 | FIXME | Missing rate limiting |
+          >
+          > ### 🟡 Should Fix Soon ($N items)
+          > | File | Line | Type | Comment |
+          > |------|------|------|---------|
+          > | lib/cache.ts | 88 | HACK | Temporary cache bypass |
+          >
+          > ### 🟢 Nice to Have ($N items)
+          > | File | Line | Type | Comment |
+          > |------|------|------|---------|
+          > | utils/format.ts | 12 | TODO | Add i18n support |
+          >
+          > _Scanned on $(date +%Y-%m-%d). Keywords: $KEYWORDS._
+
+          ──────────────────────────────────────────────
+          STEP 5 — CREATE INDIVIDUAL ISSUES (OPTIONAL)
+          ──────────────────────────────────────────────
+          Only if CREATE_ISSUES is 'true':
+          For each 🔴 'Should Fix Now' finding, create an individual issue:
+          - Title: '[TODO] <brief description> in <file>'
+          - Labels: 'todo-tracker', appropriate priority label
+          - Body with file path, line number, context, and suggested fix
+          " --model "$MODEL"

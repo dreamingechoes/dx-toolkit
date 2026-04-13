@@ -1,0 +1,129 @@
+# ──────────────────────────────────────────────────────────────
+# 💡 Copilot Suggester (Discussion Mode) — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Scans your codebase and creates discussion ideas for
+# improvements across security, performance, UX, docs, etc.
+# ──────────────────────────────────────────────────────────────
+
+name: 💡 Copilot Suggester (Discussion Mode)
+
+on:
+  schedule:
+    - cron: "0 9 1 * *" # First day of each month at 9:00 UTC
+
+permissions:
+  contents: read
+  discussions: write
+
+concurrency:
+  group: copilot-suggester
+  cancel-in-progress: true
+
+jobs:
+  suggest:
+    name: 💡 Analyze & Suggest Improvements
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 📦 Install GitHub Copilot CLI
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 💡 Analyze codebase and create discussions
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          SUGGESTION_TYPE: ${{ inputs.suggestion_type || 'all' }}
+          MODEL: ${{ inputs.model || 'claude-sonnet-4' }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          if [ "$SUGGESTION_TYPE" = "all" ]; then
+            CATEGORIES="Security, Performance, Refactoring, Testing, Documentation, Architecture, Configuration, Bugs, Maintainability, UX/Design, and README improvements"
+          else
+            CATEGORIES="$SUGGESTION_TYPE"
+          fi
+
+          copilot -p "
+          You are analyzing the repository '${{ github.repository }}' to find improvement
+          suggestions. Follow these steps:
+
+          ──────────────────────────────────────────────
+          STEP 1 — DISCOVER DISCUSSION CATEGORIES
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to list ALL available discussion categories in this
+          repository. Look for a category named 'Ideas' or similar (like '💡 Ideas',
+          'Feature requests', etc.). SAVE the category ID — you MUST use it when
+          creating discussions.
+
+          ──────────────────────────────────────────────
+          STEP 2 — REVIEW EXISTING DISCUSSIONS
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to review the last 10 discussions in this repository
+          to understand the title structure, body structure, and language used.
+
+          ──────────────────────────────────────────────
+          STEP 3 — ANALYZE THE CODEBASE
+          ──────────────────────────────────────────────
+          Thoroughly analyze all code in this repository looking for improvements in:
+          $CATEGORIES
+
+          For each area, check:
+          - Security vulnerabilities (hardcoded secrets, injection risks, missing input validation)
+          - Performance bottlenecks (N+1 queries, missing caching, inefficient algorithms)
+          - Code quality (duplicated code, dead code, complex functions, missing error handling)
+          - Testing gaps (untested critical paths, missing edge cases)
+          - Documentation gaps (missing README sections, outdated docs, missing API docs)
+          - Architecture concerns (tight coupling, missing abstractions, scalability issues)
+          - Configuration issues (hardcoded values, missing env vars, insecure defaults)
+          - Dependency issues (outdated packages, known vulnerabilities, unused dependencies)
+
+          ──────────────────────────────────────────────
+          STEP 4 — CHECK FOR EXISTING ISSUES
+          ──────────────────────────────────────────────
+          Before creating any discussion, use the GitHub MCP Server to search for existing
+          ISSUES in this repository that might be related to each suggestion.
+          - Search both open AND closed issues.
+          - If an issue already covers the topic, DO NOT create a discussion for it.
+          - Only proceed if NO related issue exists.
+
+          ──────────────────────────────────────────────
+          STEP 5 — CREATE DISCUSSIONS
+          ──────────────────────────────────────────────
+          For each important suggestion that has NO related existing issue, create a
+          DISCUSSION using the GitHub MCP Server.
+
+          CRITICAL REQUIREMENTS for each discussion:
+          - Category: Use the 'Ideas' category (or equivalent found in Step 1)
+          - Title: Follow the same style as existing discussions
+          - Language: Match the language of existing discussions, default to English
+          - Body: Use a structured format with:
+            - What the suggestion is
+            - Why it would improve the codebase
+            - Proposed implementation approach
+            - Impact assessment (High/Medium/Low)
+          - Footer: Include '🤖 This discussion was automatically generated by Copilot CLI'
+
+          ──────────────────────────────────────────────
+          STEP 6 — ADD LABELS
+          ──────────────────────────────────────────────
+          After creating each discussion, you MUST add labels using the GitHub MCP Server.
+          - First, list available labels in the repository.
+          - If '🤖 copilot-suggestion' does NOT exist, CREATE it first
+            (color: '7057ff', description: 'Automatically generated suggestion by Copilot').
+          - EVERY discussion MUST include the '🤖 copilot-suggestion' label.
+          - Add additional labels based on the suggestion type.
+
+          ⚠️ QUALITY OVER QUANTITY:
+          - Only create discussions that provide REAL VALUE to the project.
+          - Skip minor nitpicks, trivial improvements, or insignificant changes.
+          - If the codebase is in good shape, it is OK to create zero discussions.
+          - Create individual discussions for each suggestion, not a single one with everything.
+          " --allow-all-tools --model "$MODEL"
+
+          echo "✅ Copilot Suggester analysis completed"

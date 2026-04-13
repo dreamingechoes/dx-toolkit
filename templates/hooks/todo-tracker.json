@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": ".github/hooks/scripts/todo-tracker.sh",
+        "timeout": 5,
+        "description": "Flag new TODO/FIXME/HACK comments added without a linked issue"
+      }
+    ]
+  }
+}

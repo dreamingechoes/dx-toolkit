@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": ".github/hooks/scripts/file-size-limiter.sh",
+        "timeout": 5,
+        "description": "Warn when a file exceeds 500 lines to encourage modular code"
+      }
+    ]
+  }
+}

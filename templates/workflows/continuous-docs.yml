@@ -1,0 +1,170 @@
+# ──────────────────────────────────────────────────────────────
+# 📚 Continuous Documentation — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Triggers on pull requests. Analyzes PR code changes, detects
+# documentation drift, auto-fixes README/API docs, and pushes
+# a commit to the PR branch.
+# ──────────────────────────────────────────────────────────────
+
+name: 📚 Continuous Documentation
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: continuous-docs-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  continuous-docs:
+    name: 📚 Check & Improve Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 🔐 Verify author is repo owner
+        id: author_check
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+          INPUT_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          allowed="false"
+          if [ "$INPUT_AUTHOR" = "$REPO_OWNER" ]; then
+            allowed="true"
+          fi
+          echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
+          if [ "$allowed" != "true" ]; then
+            echo "⏭️ Skipping: author '$INPUT_AUTHOR' is not repository owner '$REPO_OWNER'."
+          fi
+
+      - name: 📥 Checkout PR branch
+        if: steps.author_check.outputs.allowed == 'true'
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+          token: ${{ secrets.COPILOT_PAT }}
+
+      - name: 📦 Install GitHub Copilot CLI
+        if: steps.author_check.outputs.allowed == 'true'
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 📚 Analyze code changes and fix documentation drift
+        if: steps.author_check.outputs.allowed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          MODEL: "claude-sonnet-4"
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          copilot -p "
+          You are an expert Continuous Documentation assistant for '${{ github.repository }}'.
+          Your job is to analyze code changes in a pull request, detect documentation drift,
+          fix it directly, and notify the PR author.
+
+          PULL REQUEST DETAILS:
+          - Number: #$PR_NUMBER
+          - Title: $PR_TITLE
+          - Author: @$PR_AUTHOR
+          - Base branch: $BASE_REF
+          - Head branch: $HEAD_REF
+
+          Follow these steps IN ORDER:
+
+          ──────────────────────────────────────────────
+          STEP 1 — UNDERSTAND THE PROJECT
+          ──────────────────────────────────────────────
+          - Read the repository README (and localized versions like README.es.md).
+          - Read CONTRIBUTING.md or AGENTS.md if they exist.
+          - Scan the project structure to identify where documentation lives:
+            README files, docs/ folder, API docs, JSDoc/docstrings, inline comments, etc.
+
+          ──────────────────────────────────────────────
+          STEP 2 — ANALYZE THE PR CHANGES
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to get the full diff of PR #$PR_NUMBER.
+          Identify ALL files changed, added, or deleted. Categorize:
+          a) New features or public APIs added
+          b) Existing features or APIs modified (signature changes, behavior changes)
+          c) Features or APIs removed/deprecated
+          d) Configuration changes (env vars, settings, dependencies)
+          e) Workflow or CI/CD changes
+          f) Structural changes (files renamed, moved, reorganized)
+
+          ──────────────────────────────────────────────
+          STEP 3 — DETECT DOCUMENTATION DRIFT
+          ──────────────────────────────────────────────
+          For each change in Step 2, check whether existing documentation is still accurate:
+
+          a) README drift — features, commands, APIs, file paths, project structure,
+             installation/usage instructions, config examples, env var lists
+          b) API/docstring drift — function signatures, parameters, return types, error behaviors
+          c) Inline comment drift — comments describing logic that no longer matches code,
+             resolved TODO/FIXME/HACK comments still present
+          d) Config & dependency drift — new dependencies without prerequisites docs,
+             changed env vars without updating .env.example or README
+          e) Missing documentation — new public functions/classes/endpoints without docs,
+             new workflows/scripts without usage instructions
+
+          ──────────────────────────────────────────────
+          STEP 4 — FIX DOCUMENTATION DIRECTLY
+          ──────────────────────────────────────────────
+          For each drift or gap found, EDIT THE FILES DIRECTLY in the working directory:
+          - README drift: edit README.md (and localized versions)
+          - API/docstring drift: edit source files
+          - Stale comments: remove or update
+          - Config docs: update .env.example, prerequisites, setup instructions
+          - Missing docs: add docstrings, README sections, usage instructions
+
+          Prioritize by impact:
+          🔴 Critical — documentation is actively misleading
+          🟡 Important — documentation is incomplete or stale
+          🟢 Nice to have — minor wording improvements
+          Focus on 🔴 and 🟡. Only fix 🟢 if there are few total changes.
+
+          ──────────────────────────────────────────────
+          STEP 5 — COMMIT AND PUSH CHANGES
+          ──────────────────────────────────────────────
+          After editing files, commit and push to the HEAD branch ($HEAD_REF) with message:
+            📚 docs: update documentation to match code changes
+          Only commit files you actually modified. If no drift was found, do NOT create
+          an empty commit.
+
+          ──────────────────────────────────────────────
+          STEP 6 — LEAVE A SUMMARY COMMENT
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to add a SHORT comment on PR #$PR_NUMBER:
+
+          If you made changes:
+          > 📚 **Documentation updated!**
+          > I detected documentation drift and pushed a commit to fix it:
+          > - (list each file changed and a one-line summary)
+          > Please review the changes and adjust if needed.
+          > ---
+          > 🤖 *Auto-updated by Copilot Continuous Documentation*
+
+          If everything was already in sync:
+          > 📚 **Docs are in sync!** No documentation drift detected. Great job @$PR_AUTHOR! 👏
+
+          IMPORTANT GUIDELINES:
+          - NEVER change the meaning of existing documentation — only fix drift.
+          - Respect the project's existing documentation style and formatting.
+          - If docs exist in multiple languages, update ALL of them.
+          - Only fix issues directly caused by THIS PR's changes.
+          - Be conservative — skip marginal changes rather than risk breaking good docs.
+          " --allow-all-tools --model "$MODEL"
+
+          echo "✅ Documentation analysis completed for PR #$PR_NUMBER"

@@ -1,0 +1,135 @@
+# ──────────────────────────────────────────────────────────────
+# 🔄 Monorepo Change Detector — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Detects which packages changed in a monorepo PR, maps them
+# to workspace packages, identifies affected dependents, and
+# comments on the PR with a summary and suggested commands.
+# ──────────────────────────────────────────────────────────────
+
+name: 🔄 Monorepo Change Detector
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: monorepo-detector-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  detect-changes:
+    name: 🔄 Detect Changed Packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 📦 Install GitHub Copilot CLI
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 🔄 Analyze monorepo changes
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          WORKSPACE_CONFIG: ""
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          MODEL: "claude-sonnet-4"
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          # Get changed files
+          CHANGED_FILES=$(git diff --name-only "origin/$BASE_REF"...HEAD)
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          copilot -p "
+          You are a Monorepo Change Detector for the repository '${{ github.repository }}'.
+          Analyze which packages are affected by the changes in PR #$PR_NUMBER.
+
+          CONFIGURATION:
+          - Base branch: $BASE_REF
+          - Workspace config hint: $WORKSPACE_CONFIG
+
+          CHANGED FILES:
+          $CHANGED_FILES
+
+          Follow these steps IN ORDER:
+
+          ──────────────────────────────────────────────
+          STEP 1 — DETECT WORKSPACE STRUCTURE
+          ──────────────────────────────────────────────
+          Look for workspace configuration files:
+          - turbo.json (Turborepo)
+          - nx.json (Nx)
+          - pnpm-workspace.yaml (pnpm)
+          - lerna.json (Lerna)
+          - package.json with 'workspaces' field (Yarn/npm)
+          - mix.exs with umbrella config (Elixir)
+          - Cargo.toml with workspace members (Rust)
+
+          Identify all packages/apps in the workspace and their paths.
+
+          ──────────────────────────────────────────────
+          STEP 2 — MAP CHANGES TO PACKAGES
+          ──────────────────────────────────────────────
+          For each changed file, determine which workspace package it belongs to.
+          Files at the root level affect all packages (e.g., tsconfig.base.json, .eslintrc).
+
+          ──────────────────────────────────────────────
+          STEP 3 — IDENTIFY AFFECTED DEPENDENTS
+          ──────────────────────────────────────────────
+          For each directly changed package, check which other packages depend on it.
+          Read package.json/mix.exs/Cargo.toml files to build the dependency graph.
+          Affected packages = directly changed + packages that depend on changed ones.
+
+          ──────────────────────────────────────────────
+          STEP 4 — SUGGEST COMMANDS
+          ──────────────────────────────────────────────
+          Based on the workspace tool detected, suggest the correct commands:
+          - Turborepo: turbo run build --filter=...
+          - Nx: nx affected --target=build
+          - pnpm: pnpm --filter=... run build
+          - Lerna: lerna run build --scope=...
+
+          ──────────────────────────────────────────────
+          STEP 5 — COMMENT ON PR
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to add a comment on PR #$PR_NUMBER:
+
+          > ## 🔄 Monorepo Change Detection
+          >
+          > ### Directly Changed Packages
+          > | Package | Path | Files Changed |
+          > |---------|------|---------------|
+          > | @scope/pkg-a | packages/pkg-a | 3 |
+          >
+          > ### Affected Dependents
+          > | Package | Depends On |
+          > |---------|------------|
+          > | @scope/app-web | @scope/pkg-a |
+          >
+          > ### Root-Level Changes
+          > - tsconfig.base.json (affects all packages)
+          >
+          > ### Suggested Commands
+          > \`\`\`bash
+          > # Build affected packages
+          > turbo run build --filter=@scope/pkg-a...
+          >
+          > # Test affected packages
+          > turbo run test --filter=@scope/pkg-a...
+          > \`\`\`
+          >
+          > _$((count)) packages affected out of $((total)) total._
+          " --model "$MODEL"

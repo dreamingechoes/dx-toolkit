@@ -1,0 +1,141 @@
+# ──────────────────────────────────────────────────────────────
+# 📏 PR Size Checker — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Warns about oversized PRs and suggests ways to break them
+# down. Adds labels based on PR size and leaves helpful
+# comments for large PRs.
+# ──────────────────────────────────────────────────────────────
+
+name: 📏 PR Size Checker
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-size-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check-size:
+    name: 📏 Check PR Size
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 🔐 Verify author is repo owner
+        id: author_check
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          allowed="false"
+          if [ "$PR_AUTHOR" = "$REPO_OWNER" ]; then
+            allowed="true"
+          fi
+          echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
+
+      - name: 📥 Checkout repository
+        if: steps.author_check.outputs.allowed == 'true'
+        uses: actions/checkout@v5
+
+      - name: 📦 Install GitHub Copilot CLI
+        if: steps.author_check.outputs.allowed == 'true'
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 📏 Analyze PR size and suggest breakdown
+        if: steps.author_check.outputs.allowed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          MAX_LINES: "500"
+          MODEL: "claude-sonnet-4"
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          copilot -p "
+          You are a PR Size Checker for the repository '${{ github.repository }}'.
+          Your job is to analyze PR size and help maintain small, reviewable PRs.
+
+          PR DETAILS:
+          - Number: #$PR_NUMBER
+          - Author: @$PR_AUTHOR
+          - Max lines threshold: $MAX_LINES
+
+          Follow these steps:
+
+          ──────────────────────────────────────────────
+          STEP 1 — ANALYZE PR SIZE
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to get the diff stats for PR #$PR_NUMBER.
+          Calculate:
+          - Total lines added
+          - Total lines removed
+          - Total lines changed (added + removed)
+          - Number of files changed
+          - Percentage of auto-generated files (lock files, configs, etc.)
+
+          ──────────────────────────────────────────────
+          STEP 2 — CATEGORIZE SIZE
+          ──────────────────────────────────────────────
+          Classify the PR size (excluding auto-generated files):
+          - 🟢 **XS** (1-50 lines) — Tiny, quick review
+          - 🟢 **S** (51-200 lines) — Small, easy review
+          - 🟡 **M** (201-500 lines) — Medium, manageable
+          - 🟠 **L** (501-1000 lines) — Large, consider splitting
+          - 🔴 **XL** (1000+ lines) — Very large, should be split
+
+          ──────────────────────────────────────────────
+          STEP 3 — ADD SIZE LABEL
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to:
+          - First, check if size labels exist (e.g., '📏 size/XS', '📏 size/S', etc.)
+          - If they don't exist, create them with appropriate colors:
+            XS/S: green, M: yellow, L: orange, XL: red
+          - Remove any existing size labels from the PR.
+          - Add the correct size label.
+
+          ──────────────────────────────────────────────
+          STEP 4 — COMMENT IF OVERSIZED
+          ──────────────────────────────────────────────
+          If the PR exceeds $MAX_LINES lines (excluding auto-generated files):
+
+          Use the GitHub MCP Server to add a comment:
+          > 📏 **Large PR detected** ($TOTAL_LINES lines changed across $FILE_COUNT files)
+          >
+          > Large PRs are harder to review and more likely to introduce bugs.
+          > Consider splitting this into smaller, focused PRs:
+          >
+          > **Suggested breakdown:**
+          > 1. PR #1: (description of logical group of changes)
+          > 2. PR #2: (description of another group)
+          > 3. ...
+          >
+          > **Files by category:**
+          > - Feature code: X files (Y lines)
+          > - Tests: X files (Y lines)
+          > - Config/infra: X files (Y lines)
+          > - Documentation: X files (Y lines)
+          >
+          > ---
+          > 🤖 *Checked by PR Size Checker*
+
+          If the PR is within limits, add a brief positive comment:
+          > 📏 **PR size looks good!** ($TOTAL_LINES lines) — Easy to review. 👍
+
+          IMPORTANT:
+          - Exclude auto-generated files from the count (package-lock.json, yarn.lock, etc.)
+          - Be constructive — suggest specific, logical ways to split the PR.
+          - Group files thematically for the breakdown suggestion.
+          - Do NOT block the PR, just advise.
+          " --allow-all-tools --model "$MODEL"
+
+          echo "✅ PR size check completed for PR #$PR_NUMBER"

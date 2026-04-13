@@ -1,0 +1,239 @@
+# ──────────────────────────────────────────────────────────────
+# 📖 Wiki Documentation Sync — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# When a PR merges to main, analyzes the diff, clones the
+# repository wiki, and creates or updates wiki pages so the
+# wiki always reflects the latest codebase state.
+# ──────────────────────────────────────────────────────────────
+
+name: 📖 Wiki Documentation Sync
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wiki-docs-sync-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  sync-wiki:
+    name: 📖 Sync Wiki Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event.pull_request.merged == true
+
+    steps:
+      - name: 🔐 Verify author is repo owner
+        id: author_check
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+          INPUT_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          allowed="false"
+          if [ "$INPUT_AUTHOR" = "$REPO_OWNER" ]; then
+            allowed="true"
+          fi
+          echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
+          if [ "$allowed" != "true" ]; then
+            echo "⏭️ Skipping: author '$INPUT_AUTHOR' is not repository owner '$REPO_OWNER'."
+          fi
+
+      - name: 📥 Checkout repository
+        if: steps.author_check.outputs.allowed == 'true'
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 📥 Clone wiki repository
+        if: steps.author_check.outputs.allowed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT }}
+        run: |
+          WIKI_URL="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.wiki.git"
+          if git clone "$WIKI_URL" wiki 2>/dev/null; then
+            echo "wiki_exists=true" >> "$GITHUB_ENV"
+            echo "✅ Wiki cloned successfully."
+          else
+            echo "wiki_exists=false" >> "$GITHUB_ENV"
+            mkdir -p wiki
+            cd wiki
+            git init
+            git remote add origin "$WIKI_URL"
+            echo "# ${{ github.event.repository.name }} Wiki" > Home.md
+            echo "" >> Home.md
+            echo "Welcome to the **${{ github.event.repository.name }}** wiki." >> Home.md
+            echo "" >> Home.md
+            echo "This wiki is automatically maintained from merged pull requests." >> Home.md
+            git add Home.md
+            git -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" \
+              commit -m "📖 Initialize wiki"
+            git push origin HEAD:master || git push origin HEAD:main || true
+            echo "✅ Wiki initialized."
+          fi
+
+      - name: 📦 Install GitHub Copilot CLI
+        if: steps.author_check.outputs.allowed == 'true'
+        run: |
+          curl -fsSL https://gh.io/copilot-install | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+      - name: 📖 Analyze changes and update wiki
+        if: steps.author_check.outputs.allowed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          MODEL: "claude-sonnet-4"
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          copilot -p "
+          You are a Wiki Documentation Sync agent for '${{ github.repository }}'.
+          A pull request has just been MERGED into the default branch. Your job is to
+          analyze the changes and update the repository's GitHub Wiki so it always
+          reflects the current state of the codebase.
+
+          MERGED PR DETAILS:
+          - Number: #$PR_NUMBER
+          - Title: $PR_TITLE
+          - Author: @$PR_AUTHOR
+          - Merge SHA: $MERGE_SHA
+
+          The repository source code is in the current directory.
+          The wiki is cloned at ./wiki/ and is a separate git repository.
+
+          Follow these steps IN ORDER:
+
+          ──────────────────────────────────────────────
+          STEP 1 — UNDERSTAND THE PROJECT CONTEXT
+          ──────────────────────────────────────────────
+          - Read the project's README.md, CONTRIBUTING.md, and docs/ folder if present.
+          - Scan the project structure to understand the codebase layout.
+          - Read existing wiki pages in ./wiki/ to understand current wiki structure,
+            naming conventions, and what's already documented.
+          - Identify the project's tech stack, frameworks, and key patterns.
+
+          ──────────────────────────────────────────────
+          STEP 2 — ANALYZE THE MERGED PR CHANGES
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to get the full diff and file list of PR #$PR_NUMBER.
+          Categorize every changed file:
+
+          a) New features or public APIs added
+          b) Existing features or APIs modified (signature, behavior, config)
+          c) Features or APIs removed or deprecated
+          d) Configuration or environment variable changes
+          e) Dependency changes (new, updated, removed)
+          f) CI/CD or infrastructure changes
+          g) Database schema or migration changes
+          h) Structural changes (new modules, files renamed/moved)
+
+          ──────────────────────────────────────────────
+          STEP 3 — DETERMINE WIKI UPDATES NEEDED
+          ──────────────────────────────────────────────
+          Based on Step 2, decide what wiki pages to create or update.
+          Use this standard wiki structure (create pages if they don't exist):
+
+          - **Home.md** — Project overview, table of contents with links to all pages
+          - **Getting-Started.md** — Prerequisites, installation, first-run instructions
+          - **Architecture.md** — High-level architecture, module structure, data flow
+          - **API-Reference.md** — Endpoints, functions, classes, public interfaces
+          - **Configuration.md** — Environment variables, config files, feature flags
+          - **Database.md** — Schema overview, migrations, query patterns
+          - **Deployment.md** — Deploy process, environments, CI/CD pipelines
+          - **Development-Guide.md** — Local setup, coding conventions, PR process
+          - **Changelog.md** — Running log of significant changes by date
+          - **Troubleshooting.md** — Common issues and solutions
+
+          Additional pages as needed for major features or modules:
+          - **Feature-<Name>.md** — Dedicated page per major feature/module
+
+          IMPORTANT: Do NOT create pages for trivial changes. Only document
+          things that a developer would need to know about.
+
+          ──────────────────────────────────────────────
+          STEP 4 — UPDATE WIKI PAGES
+          ──────────────────────────────────────────────
+          For each wiki page that needs changes, EDIT the file directly in ./wiki/:
+
+          **When updating existing pages:**
+          - Preserve the existing structure and writing style.
+          - Update only the sections affected by this PR's changes.
+          - Add new sections at the logical location in the page.
+          - Mark deprecated features clearly with ~~strikethrough~~ or a note.
+          - Never delete information that's still valid.
+
+          **When creating new pages:**
+          - Start with a level-1 heading matching the filename.
+          - Include a brief overview paragraph.
+          - Use consistent formatting: h2 for major sections, h3 for subsections.
+          - Add code examples where appropriate.
+          - Link to related wiki pages using [[Page-Name]] syntax.
+
+          **Always update Home.md** to include links to any new pages in the
+          table of contents.
+
+          **Always update Changelog.md** with an entry:
+          \`\`\`
+          ## YYYY-MM-DD — PR #NUMBER: PR Title
+          - Summary of what changed
+          - Impact on existing behavior (if any)
+          - New features or APIs added (if any)
+          \`\`\`
+
+          ──────────────────────────────────────────────
+          STEP 5 — COMMIT AND PUSH WIKI CHANGES
+          ──────────────────────────────────────────────
+          After editing wiki files:
+          1. cd into ./wiki/
+          2. Stage all changed files with \`git add -A\`
+          3. Check if there are actual changes with \`git status\`
+          4. If changes exist, commit with message:
+             📖 wiki: update docs for PR #$PR_NUMBER — $PR_TITLE
+          5. Configure git user:
+             git config user.name 'github-actions[bot]'
+             git config user.email 'github-actions[bot]@users.noreply.github.com'
+          6. Push to the wiki repository.
+          7. If no changes were needed, skip the commit.
+
+          ──────────────────────────────────────────────
+          STEP 6 — COMMENT ON THE MERGED PR
+          ──────────────────────────────────────────────
+          Use the GitHub MCP Server to add a comment on PR #$PR_NUMBER:
+
+          If wiki was updated:
+          > 📖 **Wiki updated!**
+          > The following wiki pages were updated to reflect this PR:
+          > - (list each page and a one-line summary of what changed)
+          >
+          > 🔗 [View the wiki](https://github.com/${{ github.repository }}/wiki)
+          > ---
+          > 🤖 *Auto-synced by Wiki Documentation Sync*
+
+          If no wiki changes were needed:
+          > 📖 **Wiki is up to date.** No documentation changes needed for this PR.
+
+          ──────────────────────────────────────────────
+          GUIDELINES
+          ──────────────────────────────────────────────
+          - Write for developers who are new to the project.
+          - Use clear, concise language. Active voice. No filler.
+          - Include code examples when documenting APIs or configuration.
+          - Use GitHub wiki link syntax: [[Page-Name]] and [[Page-Name|Display Text]].
+          - Keep pages focused — one topic per page.
+          - Do NOT duplicate large blocks of source code in the wiki.
+            Reference file paths instead: 'See \`src/auth/middleware.ts\` for implementation.'
+          - If the wiki doesn't exist yet, create the full initial structure from the
+            current codebase state, not just from this PR.
+          - Be conservative — only document things that matter.
+          " --allow-all-tools --model "$MODEL"
+
+          echo "✅ Wiki sync completed for PR #$PR_NUMBER"

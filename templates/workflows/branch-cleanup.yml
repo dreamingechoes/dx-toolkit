@@ -1,0 +1,167 @@
+# ──────────────────────────────────────────────────────────────
+# 🧹 Branch Cleanup — Standalone Workflow
+# ──────────────────────────────────────────────────────────────
+# Deletes merged branches after PR close and identifies stale
+# branches on a weekly schedule. Creates a summary issue for
+# stale branches. Never touches protected branches.
+# ──────────────────────────────────────────────────────────────
+
+name: 🧹 Branch Cleanup
+
+on:
+  pull_request:
+    types: [closed]
+  schedule:
+    - cron: "0 3 * * 0" # Sunday 3:00 UTC
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: branch-cleanup-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  delete-merged-branch:
+    name: 🧹 Delete Merged Branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged == true
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 🧹 Delete merged branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          DELETE_MERGED: "true"
+          PROTECTED: "main,develop,staging"
+        run: |
+          if [ "$DELETE_MERGED" != "true" ]; then
+            echo "⏭️ Branch deletion disabled."
+            exit 0
+          fi
+
+          # Check if branch is protected
+          IFS=',' read -ra PROTECTED_LIST <<< "$PROTECTED"
+          for protected in "${PROTECTED_LIST[@]}"; do
+            if [ "$BRANCH" = "$(echo "$protected" | xargs)" ]; then
+              echo "🛡️ Branch '$BRANCH' is protected — skipping."
+              exit 0
+            fi
+          done
+
+          # Delete the remote branch
+          if git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
+            git push origin --delete "$BRANCH"
+            echo "✅ Deleted merged branch: $BRANCH"
+          else
+            echo "ℹ️ Branch '$BRANCH' already deleted."
+          fi
+
+  stale-branch-report:
+    name: 🧹 Stale Branch Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'schedule'
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 Find stale branches
+        id: stale
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STALE_DAYS: "30"
+          PROTECTED: "main,develop,staging"
+        run: |
+          CUTOFF_DATE=$(date -d "$STALE_DAYS days ago" +%s 2>/dev/null || date -v-"${STALE_DAYS}"d +%s)
+
+          IFS=',' read -ra PROTECTED_LIST <<< "$PROTECTED"
+
+          STALE_BRANCHES=""
+          STALE_COUNT=0
+
+          for branch in $(git for-each-ref --sort=-committerdate --format='%(refname:short) %(committerdate:unix)' refs/remotes/origin/ | grep -v HEAD); do
+            # Parse branch name and date (pairs of lines)
+            BNAME=$(echo "$branch" | awk '{print $1}' | sed 's|origin/||')
+            BDATE=$(echo "$branch" | awk '{print $2}')
+
+            # Skip if not a valid date
+            if ! [[ "$BDATE" =~ ^[0-9]+$ ]]; then
+              continue
+            fi
+
+            # Skip protected branches
+            IS_PROTECTED=false
+            for protected in "${PROTECTED_LIST[@]}"; do
+              if [ "$BNAME" = "$(echo "$protected" | xargs)" ]; then
+                IS_PROTECTED=true
+                break
+              fi
+            done
+
+            if [ "$IS_PROTECTED" = true ]; then
+              continue
+            fi
+
+            # Check if stale
+            if [ "$BDATE" -lt "$CUTOFF_DATE" ]; then
+              LAST_COMMIT_DATE=$(date -d "@$BDATE" +%Y-%m-%d 2>/dev/null || date -r "$BDATE" +%Y-%m-%d)
+              LAST_AUTHOR=$(git log -1 --format='%an' "origin/$BNAME" 2>/dev/null || echo "unknown")
+              STALE_BRANCHES="$STALE_BRANCHES| \`$BNAME\` | $LAST_COMMIT_DATE | $LAST_AUTHOR |\n"
+              STALE_COUNT=$((STALE_COUNT + 1))
+            fi
+          done
+
+          echo "count=$STALE_COUNT" >> "$GITHUB_OUTPUT"
+
+          if [ "$STALE_COUNT" -gt 0 ]; then
+            {
+              echo "body<<STALE_EOF"
+              echo "## 🧹 Stale Branch Report"
+              echo ""
+              echo "Found **$STALE_COUNT** stale branches (no commits in $STALE_DAYS+ days)."
+              echo ""
+              echo "| Branch | Last Commit | Author |"
+              echo "|--------|-------------|--------|"
+              echo -e "$STALE_BRANCHES"
+              echo ""
+              echo "### Recommended Actions"
+              echo "- Delete branches that are no longer needed"
+              echo "- Rebase and continue work on branches that are still relevant"
+              echo "- Protected branches ($PROTECTED) are excluded from this report"
+              echo ""
+              echo "_Generated by 🧹 Branch Cleanup workflow on $(date +%Y-%m-%d)_"
+              echo "STALE_EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 📋 Create stale branch issue
+        if: steps.stale.outputs.count > 0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Close previous stale branch issues
+          gh issue list --label "stale-branches" --state open --json number -q '.[].number' | while read -r num; do
+            gh issue close "$num" --comment "Superseded by new stale branch report."
+          done
+
+          # Create label if it doesn't exist
+          gh label create "stale-branches" --description "Stale branch cleanup" --color "FBCA04" 2>/dev/null || true
+
+          # Create new issue
+          gh issue create \
+            --title "🧹 Stale Branch Report — $(date +%Y-%m-%d)" \
+            --body "${{ steps.stale.outputs.body }}" \
+            --label "stale-branches"
