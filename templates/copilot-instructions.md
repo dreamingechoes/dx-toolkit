@@ -4,6 +4,7 @@
 
 <!-- TODO: Replace this placeholder with a description of your project.
      Describe what it does, its architecture, and key technologies. -->
+
 This is `{{PROJECT_NAME}}`.
 
 ### Development Lifecycle
