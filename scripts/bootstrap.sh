@@ -46,6 +46,13 @@ ask_yn() {
   [[ "$yn" =~ ^[Yy] ]]
 }
 
+ask_text() {
+  local prompt="$1" default="$2"
+  local input
+  read -rp "$(echo -e "${BOLD}$prompt${NC} [${DIM}$default${NC}] ")" input
+  echo "${input:-$default}"
+}
+
 ask_choice() {
   local prompt="$1"
   shift
@@ -125,6 +132,19 @@ copy_one() {
   if [[ -f "$src" ]]; then
     mkdir -p "$(dirname "$dest")"
     cp "$src" "$dest"
+    [[ -n "$label" ]] && success "$label"
+    return 0
+  fi
+  return 1
+}
+
+copy_template() {
+  local src="$1" dest="$2" label="${3:-}"
+  if [[ -f "$src" ]]; then
+    mkdir -p "$(dirname "$dest")"
+    sed -e "s|{{PROJECT_NAME}}|${PROJECT_NAME}|g" \
+        -e "s|{{CONFIG_DIR}}|${CONFIG_DIR}|g" \
+        "$src" > "$dest"
     [[ -n "$label" ]] && success "$label"
     return 0
   fi
@@ -222,6 +242,7 @@ if [[ "$MODE" == "all" ]]; then
 
   # --all always uses .github/ as config dir
   CONFIG_DIR=".github"
+  PROJECT_NAME="$(basename "$TARGET")"
 
   header "Agents"
   copy_dir "$SOURCE_DIR/templates/agents" "$TARGET/$CONFIG_DIR/agents" "All agents"
@@ -234,7 +255,7 @@ if [[ "$MODE" == "all" ]]; then
 
   header "Instructions"
   copy_dir "$SOURCE_DIR/templates/instructions" "$TARGET/$CONFIG_DIR/instructions" "All instructions"
-  copy_one "$SOURCE_DIR/templates/copilot-instructions.md" "$TARGET/$CONFIG_DIR/copilot-instructions.md" "copilot-instructions.md"
+  copy_template "$SOURCE_DIR/templates/copilot-instructions.md" "$TARGET/$CONFIG_DIR/copilot-instructions.md" "copilot-instructions.md"
 
   header "Hooks"
   copy_dir "$SOURCE_DIR/templates/hooks" "$TARGET/$CONFIG_DIR/hooks" "Hooks"
@@ -256,11 +277,17 @@ if [[ "$MODE" == "all" ]]; then
   success "Workflows"
 
   header "Entry Points"
-  copy_one "$SOURCE_DIR/CLAUDE.md" "$TARGET/CLAUDE.md" "CLAUDE.md"
-  copy_one "$SOURCE_DIR/AGENTS.md" "$TARGET/AGENTS.md" "AGENTS.md"
+  copy_template "$SOURCE_DIR/templates/CLAUDE.md" "$TARGET/CLAUDE.md" "CLAUDE.md"
+  copy_template "$SOURCE_DIR/templates/AGENTS.md" "$TARGET/AGENTS.md" "AGENTS.md"
 
   echo ""
   echo -e "${BOLD}${GREEN}Done! All components installed to ${BLUE}$TARGET${NC}"
+  echo ""
+  warn "Review and customize these files with your project's details:"
+  echo -e "  ${DIM}• ${TARGET}/$CONFIG_DIR/copilot-instructions.md  — replace TODO sections with your project info${NC}"
+  echo -e "  ${DIM}• ${TARGET}/CLAUDE.md                           — add project description and structure${NC}"
+  echo -e "  ${DIM}• ${TARGET}/AGENTS.md                           — already configured (verify agent list)${NC}"
+  echo ""
   exit 0
 fi
 
@@ -271,6 +298,12 @@ fi
 echo ""
 echo -e "${BOLD}${CYAN}🤖 DX Toolkit — Smart Setup${NC}"
 echo -e "${DIM}A few questions to install only what your project needs.${NC}"
+
+# ─── Step 0: Project Name ────────────────────────────────────
+
+DEFAULT_PROJECT_NAME="$(basename "$TARGET")"
+echo ""
+PROJECT_NAME=$(ask_text "What's your project name?" "$DEFAULT_PROJECT_NAME")
 
 # ─── Step 1: Editor / AI Tool ────────────────────────────────
 
@@ -610,34 +643,32 @@ TOTAL=$((TOTAL + 8))
 header "Editor Setup"
 
 if [[ "$INSTALL_COPILOT" == true ]]; then
-  copy_one "$SOURCE_DIR/templates/copilot-instructions.md" \
-           "$TARGET/.github/copilot-instructions.md" \
-           "copilot-instructions.md"
+  copy_template "$SOURCE_DIR/templates/copilot-instructions.md" \
+                "$TARGET/.github/copilot-instructions.md" \
+                "copilot-instructions.md"
   TOTAL=$((TOTAL + 1))
 fi
 
 if [[ "$INSTALL_CLAUDE" == true ]]; then
-  copy_one "$SOURCE_DIR/CLAUDE.md" "$TARGET/CLAUDE.md" "CLAUDE.md"
+  copy_template "$SOURCE_DIR/templates/CLAUDE.md" "$TARGET/CLAUDE.md" "CLAUDE.md"
   TOTAL=$((TOTAL + 1))
 fi
 
 if [[ "$INSTALL_CURSOR" == true ]]; then
   if [[ -f "$SOURCE_DIR/templates/copilot-instructions.md" ]]; then
-    cp "$SOURCE_DIR/templates/copilot-instructions.md" "$TARGET/.cursorrules"
-    success ".cursorrules"
+    copy_template "$SOURCE_DIR/templates/copilot-instructions.md" "$TARGET/.cursorrules" ".cursorrules"
     TOTAL=$((TOTAL + 1))
   fi
 fi
 
 if [[ "$INSTALL_WINDSURF" == true ]]; then
   if [[ -f "$SOURCE_DIR/templates/copilot-instructions.md" ]]; then
-    cp "$SOURCE_DIR/templates/copilot-instructions.md" "$TARGET/.windsurfrules"
-    success ".windsurfrules"
+    copy_template "$SOURCE_DIR/templates/copilot-instructions.md" "$TARGET/.windsurfrules" ".windsurfrules"
     TOTAL=$((TOTAL + 1))
   fi
 fi
 
-copy_one "$SOURCE_DIR/AGENTS.md" "$TARGET/AGENTS.md" "AGENTS.md"
+copy_template "$SOURCE_DIR/templates/AGENTS.md" "$TARGET/AGENTS.md" "AGENTS.md"
 TOTAL=$((TOTAL + 1))
 
 # ── Templates ──
@@ -699,6 +730,22 @@ fi
 if [[ "$INSTALL_WINDSURF" == true ]]; then
   echo "  3. Open in Windsurf — .windsurfrules is configured"
 fi
+
+echo ""
+warn "Customize these files with your project's details (look for TODO comments):"
+if [[ "$INSTALL_COPILOT" == true ]]; then
+  echo -e "  ${DIM}• $CONFIG_DIR/copilot-instructions.md${NC}"
+fi
+if [[ "$INSTALL_CLAUDE" == true ]]; then
+  echo -e "  ${DIM}• CLAUDE.md${NC}"
+fi
+if [[ "$INSTALL_CURSOR" == true ]]; then
+  echo -e "  ${DIM}• .cursorrules${NC}"
+fi
+if [[ "$INSTALL_WINDSURF" == true ]]; then
+  echo -e "  ${DIM}• .windsurfrules${NC}"
+fi
+echo -e "  ${DIM}• AGENTS.md${NC}"
 
 echo ""
 echo -e "  ${DIM}git add . && git commit -m 'feat: add dx-toolkit for AI-assisted development'${NC}"
